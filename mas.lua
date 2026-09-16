@@ -123,7 +123,7 @@ if _G.Proto then
   proto.fields = { pf.ctrl, pf.sess, pf.chck, pf.compressed, pf.continued, pf.length, pf.data }
   mas.pf_data = pf.data   -- stream modules reuse this for undecodable bodies
 
-  proto.prefs.port = Pref.uint("TCP port", 15201, "MAS server source port")
+  proto.prefs.port = Pref.uint("TCP port", 15201, "TCP port to auto-bind MAS to (either direction); irrelevant when manually applied via Decode As")
   local bound_port
 
   -- Reassembly continuation tracking (see notes below).
@@ -154,7 +154,12 @@ if _G.Proto then
   end
 
   function proto.dissector(tvb, pinfo, tree)
-    if pinfo.src_port ~= bound_port then return 0 end     -- MAS = traffic from the server port
+    -- No src_port re-check here: whatever bound this dissector to the packet —
+    -- the tcp.port table entry (apply_port, below) or a user's manual "Decode
+    -- As" (which can target any port/direction and must not be second-guessed)
+    -- — recognition then goes purely by content: does mas.scan find a G/W
+    -- frame? Non-MAS bytes on a bound port/stream just show up as "Unspecified"
+    -- rather than being silently rejected.
     local buf = tvb:raw()
     if not buf or #buf == 0 then return 0 end
 
