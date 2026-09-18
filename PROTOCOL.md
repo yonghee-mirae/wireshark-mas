@@ -1,9 +1,9 @@
 # MAS 프로토콜 분석 및 구현 노트
 
 이 문서는 `mas.lua` / `mas_rts.lua` / `mas_transaction.lua` /
-`mas_execution_price.lua` / `mas_order_report.lua`가 해석하는
-와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한 것이다(파일 구조는
-§6 참고). 근거는
+`mas_execution_price.lua` / `mas_quote_price.lua` / `mas_order_report.lua`가
+해석하는 와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한 것이다
+(파일 구조는 §6 참고). 근거는
 `design/AXIS-4.1.0_Protocol_WTS_ADD.docx`(원 설계 문서, 이하 "설계 문서")와
 `samples/` 아래 두 개의 실제 캡처(`20260915_0809_RTS2.pcapng`,
 `20260915_0809_RTS.pcapng`)를 바이트 단위로 교차 검증한 결과다.
@@ -18,9 +18,10 @@ G/W HEADER (12 bytes)
 ```
 
 캡처 스트림은 `FE FE` 프레임이 NUL 패딩을 사이에 두고 연속으로 이어지는 형태이며,
-이 프로젝트가 지원하는 건 다음 **두 가지 내부 프로토콜뿐**이다:
+이 프로젝트가 지원하는 건 다음 **세 가지 내부 프로토콜뿐**이다:
 
 - **체결 시세 (Execution Price)** — SESS=0x08, RTS-HEADER TYPE=`B`
+- **호가 시세 (Quote Price)** — SESS=0x08, RTS-HEADER TYPE=`C`
 - **실시간 주문 체결 (Order Report)** — SESS=0x01, AXIS-HEADER MSGK=0x90(UMP)
 
 그 외 모든 것(다른 TYPE, 다른 MSGK, 압축, 암호화, heartbeat)은 **헤더에서 알 수
@@ -121,6 +122,27 @@ static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
   `mas.ep` 존재 필터(§4.7)로 구분한다.
 - Statistics 창: **MAS/Execution** — Market/Issue/Time/Price/TrdVol/AccVol/Reversed
   컬럼, 5-tuple(Flow) 별 구분.
+
+## 3.5. Layer 2/3 — RTS (SESS=0x08), TYPE='C': `mas_quote_price.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일(`mas_rts.lua`가 담당). TYPE='C'(호가 시세)
+바디는 **128 tab-분리 필드**(127개 명명 필드 + 숨은 `sep`(`'C'`) 1개) — 전체
+필드 맵과 검증 근거는 **§8**을 참고(이 섹션은 요약만).
+
+- 구현 파일: `mas_quote_price.lua`. `Q.FIELD_NAMES`(128개, §8 순서 그대로),
+  `Q.decode(body)`(39필드 체결의 `E.decode`와 동일 패턴 — 필드 개수가
+  128이 아니면 `nil`), `Q.split_market`(체결과 동일한 이슈코드 접두어 규칙).
+- Proto: `mas.qp` ("MAS Quote Price")
+- 필드: `mas.qp.<field>` (128필드 중 `sep` 제외), `mas.qp.market`.
+- `mas.by_rts_type["C"]`에 등록 — TYPE='B'와 마찬가지로 **디코드 성공 여부에
+  따라 서브트리 proto를 직접 선택**한다(성공: `mas.qp`, 실패: 우산 `mas` +
+  expert info. §4.7 원칙과 동일). 누적 상태(reversal 같은) 없이 매 레코드
+  독립적으로 디코드하므로 `init` 훅은 등록하지 않는다.
+- Info 라벨: 별도 라벨 없음 — TYPE='B'와 마찬가지로 RTS(SESS=0x08) 프레임은
+  Info 컬럼에 `RTS`로만 집계된다(§4.6). 상세창의 `Quote Price` vs
+  `Unspecified RTS` 라벨과 `mas.qp` 존재 필터로 디코드 성공 여부를 구분한다.
+- Statistics 창: 없음(요청 범위 밖 — 필요해지면 `mas_execution_price.lua`의
+  `MAS/Execution` 창과 동일한 패턴으로 추가 가능).
 
 ## 4. Layer 2/3 — Transaction (SESS=0x01): `mas_transaction.lua`(프레이밍) + `mas_order_report.lua`(MSGK=0x90 디코드)
 
@@ -348,7 +370,7 @@ Decode As와 상충한다.
 |---|---|---|
 | RTS 압축 | CHCK bit `0x02` | LZO 압축, 라이브러리/구현 없음 → `mas.data` |
 | Transaction 암호화 | ACTF bit `0x02` | Xecure/XecureMobile 구간암호화, 키 없음 → `mas.data` |
-| RTS TYPE ≠ 'B' | C/D/U/Y/Z/c/m/y/V/F 등 | 레이아웃 미상, 요청 범위 밖 → KIND/TYPE/LENGTH만 표시 + `mas.data` |
+| RTS TYPE ≠ 'B'/'C' | D/U/Y/Z/c/m/y/V/F 등 | 레이아웃 미상, 요청 범위 밖 → KIND/TYPE/LENGTH만 표시 + `mas.data` |
 | Transaction MSGK ≠ 0x90 | Normal/RTS-on-off/Dialog/Error/키교환 등 | 요청 범위 밖(주문체결·체결시세만 지원) → AXIS-HEADER만 표시 + `mas.data` |
 | Heartbeat | CTRL=`0x04` | 데이터 없음, 상세창·Info 모두 `Heartbeat` |
 
@@ -367,10 +389,12 @@ Decode As와 상충한다.
 ## 6. 파일 구조와 조율 방식
 
 2026-09-18 리팩터: "SESS 계층 프레이밍/디스패치"와 "TYPE/MSGK별 실제 디코더"를
-분리해 **3계층 5파일** 구조로 재구성했다. 이전에는 `mas_execution_price.lua`/
+분리해 **3계층 구조**로 재구성했다. 이전에는 `mas_execution_price.lua`/
 `mas_order_report.lua`가 SESS 계층 프레이밍까지 함께 떠안고 있어서, 새 TYPE/MSGK
 디코더를 추가하려면 `mas.by_sess[SESS]`가 핸들러 하나만 허용하는 구조와 충돌했다.
-지금은 각 디코더가 자기 파일 하나로 독립적으로 추가/삭제될 수 있다.
+지금은 각 디코더가 자기 파일 하나로 독립적으로 추가/삭제될 수 있다 — 같은 날
+바로 이어서 `mas_quote_price.lua`(TYPE='C')를 기존 파일들 수정 없이 추가한 게
+그 효과의 실증이다.
 
 | 파일 | 계층 | 역할 |
 |---|---|---|
@@ -378,6 +402,7 @@ Decode As와 상충한다.
 | `mas_rts.lua` | 2 (RTS) | SESS=0x08 등록, RTS-HEADER 파싱(`split_records`), 공용 헤더 필드(`mas.rts.*`), TYPE별 디스패치(`mas.by_rts_type`), 미등록 TYPE의 "Unspecified RTS" 표시 |
 | `mas_transaction.lua` | 2 (Transaction) | SESS=0x01 등록, AXIS-HEADER 파싱, 공용 헤더 필드(`mas.axis.*`), MSGK별 디스패치(`mas.by_msgk`), 미등록/암호화 MSGK의 "Unspecified Transaction" 표시 |
 | `mas_execution_price.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.ep.*` 필드, MAS/Execution 창. `mas.by_rts_type["B"]`에 등록 |
+| `mas_quote_price.lua` | 3 (RTS TYPE='C') | 호가 시세 디코드, `mas.qp.*` 필드. `mas.by_rts_type["C"]`에 등록 (§3.5) |
 | `mas_order_report.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.or.*` 필드, MAS/Order 창. `mas.by_msgk[0x90]`에 등록 |
 
 - 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
@@ -401,11 +426,11 @@ Decode As와 상충한다.
     MSGK/암호화 여부만으로 proto를 미리 정하고 서브트리를 만든 뒤 3계층
     파일에 넘겨도 안전하다 — TYPE='B'와의 이 차이가 두 디스패치 패턴이
     다른 이유다.
-- 새 메시지 타입을 추가하려면: RTS면 `mas_quote.lua` 같은 새 파일을 만들어
-  `mas.by_rts_type["C"] = {...}`를 등록하고, Transaction이면 새 파일에서
-  `mas.by_msgk[해당MSGK] = {...}`를 등록하면 된다 — `mas_rts.lua`/
+- 새 메시지 타입을 추가하려면: RTS면 `mas_quote_price.lua`(TYPE='C', §3.5)처럼
+  새 파일을 만들어 `mas.by_rts_type[TYPE] = {...}`를 등록하고, Transaction이면
+  새 파일에서 `mas.by_msgk[해당MSGK] = {...}`를 등록하면 된다 — `mas_rts.lua`/
   `mas_transaction.lua`는 건드릴 필요 없다.
-- 배포 시 **다섯 파일 모두** 플러그인 디렉터리에 복사해야 한다. 2계층 파일이
+- 배포 시 **여섯 파일 모두** 플러그인 디렉터리에 복사해야 한다. 2계층 파일이
   없으면 해당 SESS 전체가 raw data로만 보이고, 3계층 파일이 없으면 그 TYPE/
   MSGK만 "Unspecified"로 보인다.
 
@@ -456,68 +481,112 @@ Transaction 1 + heartbeat 1)에 대해 `mas.proto.dissector`를 직접 호출해
 탐지가 `mas.by_rts_type["B"].init` 훅을 거쳐도 여전히 동작하는지. 전부 통과.
 저장소에는 미포함(세션 내 스크래치패드).
 
-## 8. 호가 시세(RTS TYPE='C') 분석 노트 — ⚠️ 미구현, 추후 확정된 규격으로 교체 예정
+## 8. 호가 시세(RTS TYPE='C') 필드 맵 — ✅ 확정, ✅ 구현됨 (`mas_quote_price.lua`)
 
-**이 섹션은 아직 코드로 구현되지 않았다.** `mas_execution_price.lua`가 TYPE='B'만
-디코드하는 것과 동일하게, TYPE='C'(호가 시세)도 디코드하려면 이 분석을 바탕으로
-새 파일(가칭 `mas_quote.lua`, `mas.by_rts_type["C"]`에 등록 — §6)이 필요하지만,
-**아래 필드 매핑은 official layout 없이 `samples/20260915_0809_RTS.pcapng`만으로
-역추적한 것**이라 확정이 아니다. 추후 확정된 규격 문서가 오면 이 섹션을 그것으로
-교체하고 구현에 들어갈 것.
+**필드 순서/이름은 폐하께서 확정해 주신 사양(127개, 아래 표)이고, 두 샘플의
+TYPE='C' 레코드 979건 전체에 대해 항등식(합계 검증)으로 교차 검증까지
+마쳤다.** `mas_execution_price.lua`가 TYPE='B'를 디코드하는 것과 동일한
+패턴으로 `mas_quote_price.lua`를 구현해 `mas.by_rts_type["C"]`에 등록했다
+(§3.5, §6).
 
-### 근거
+### 필드 개수: 127(확정 사양) = 128(실측 wire 필드) − 1(숨은 sep)
 
-- TYPE='C' 레코드는 캡처에서 항상 **128 tab-분리 필드**, 총 967건 관측(`D0`+`C`+
-  3자리 길이 형태의 RTS-HEADER는 §3과 동일).
-- 검증 방법: 같은 종목(M.A005930, 828건)의 연속 스냅샷 6개를 필드별로 나란히
-  비교해 "고정(가격 사다리)" vs "변동(잔량)" 패턴을 구분하고, 합계 필드는
-  실제 `sum()` 계산으로 대조, 967건 전수에 대해 "항상 0인 구간"과 "이따금
-  값이 튀는 위치·빈도"를 집계해 검증했다.
+두 샘플의 TYPE='C' 레코드 **979건 전부 정확히 128개의 탭 구분 필드**로
+고정돼 있다(가변 아님 — field-count 분포: `{128: 979}`, 예외 0건). wire
+index 1은 TYPE='B'의 `sep`와 같은 역할의 레코드타입 문자(`'C'`)로, 확정
+사양의 이름 목록(Key부터 시작해 127개)에는 포함되지 않는 숨은 필드다. 그래서
+매핑은 `named[0] → wire[0]`(Key=issue_code), `named[k] → wire[k+1]`(k≥1,
+sep 1칸 건너뜀)이며, 이 규칙으로 정확히 `127 + 1(sep) = 128`이 채워져 실측과
+완전히 맞아떨어진다.
 
-### 필드 맵 (0-based, 총 128)
+### 검증 방법
 
-| 구간 | 필드 | 확신도 | 근거 |
+- `named[k] → wire[k+1]` 매핑으로 979건 전체에 대해 다음 항등식을 확인했다
+  (전부 예외 없이 성립):
+  - `wire[13..22](매도량) == wire[33..42](K매도량) + wire[43..52](N매도량)`
+    (레벨별 10쌍 전부)
+  - `wire[63..72](매수량) == wire[83..92](K매수량) + wire[93..102](N매수량)`
+  - `wire[124](KRX매도총잔량) + wire[125](NXT매도총잔량) == wire[103](매도총량)`
+  - `wire[126](KRX매수총잔량) + wire[127](NXT매수총잔량) == wire[105](매수총량)`
+  - `wire[114](순매수총잔량) == wire[105](매수총량) - wire[103](매도총량)`
+    (부호 포함 일치, 예: `49302-22158=27144` → `wire[114]="+27144"`)
+- `wire[2]`가 `HHMMSS` 형태(예: `"183551"`)인지 직접 확인해 `named[1]=호가시간`
+  매핑(= sep 1칸 건너뛰기)이 맞는지 검증했다.
+- `M.A006800`처럼 매도/매수 양쪽 다 K/N이 실제로 0이 아닌 종목 레코드를 찾아
+  위 항등식이 우연이 아님을 확인했다(예: 매도 레벨1 `ask=266,
+  K=225, N=41` — `225+41=266`).
+- 예상체결 관련 구간(107-113, 115)은 이 캡처가 장중(비-동시호가) 구간이라
+  전부 `0`/`0.00`으로 나오는데, 이는 지표가 없는 게 아니라 **해당 이벤트가
+  없어 0인 것**으로 합리적으로 설명된다(비활성이라 값 자체로는 추가 검증 불가
+  하지만 "미확인"은 아님 — 이름 그대로 받아들임).
+
+### 필드 맵 (0-based, wire 총 128 = named 127 + sep 1)
+
+| wire | named(폐하 사양) | 필드명(영문) | 확신도 |
 |---|---|---|---|
-| 0-2 | `issue_code`, `sep`('C'), `trade_time` | 확실 | TYPE='B'와 동일 패턴 |
-| 3-12 | 매도 1~10호가 (가격, 10개) | 확실 | level↑ → 가격↑ 확인. `-`/공백/`+`는 기준가 대비 하락/보합/상승(체결가 필드와 동일 인코딩로 추정) |
-| 13-22 | 매도 1~10 잔량 (10개) | 확실 | 값이 시시각각 변함 |
-| 23-32 | 매도 1~10 잔량 변동분 (10개) | 확실 | level 1이 967건 중 339회로 최다, level↑일수록 빈도 감소 — 실제 호가 갱신 패턴과 일치 |
-| 33-42 | 항상 0 (이 캡처에서 비활성, 10개) | 미확인 | 967건 전수 스캔해도 단 한 번도 비-0 없음 |
-| 43-52 | 매도 1~10 잔량 **중복**(13-22와 완전 동일, 10개) | 추정 | 6샘플 전부 13-22와 값 일치. NXT 유동성이 없는 종목이라 KRX전용=통합 값이 같아 보이는 것일 가능성(미확정) |
-| 53-62 | 매수 1~10호가 (10개) | 확실 | level↑ → 가격↓ 확인(매수는 아래로 갈수록 낮아짐) |
-| 63-72 | 매수 1~10 잔량 (10개) | 확실 | — |
-| 73-82 | 매수 1~10 잔량 변동분 (10개) | 확실 | 매도 쪽과 동일 패턴(level 1 최다 380회) |
-| 83-92 | 항상 0 (10개) | 미확인 | — |
-| 93-102 | 매수 1~10 잔량 **중복**(63-72와 동일, 10개) | 추정 | 43-52와 같은 이유로 추정 |
-| 103 | **총매도잔량** | 확실(수식 검증) | `sum(fields[13..22])`와 정확히 일치 (예: 50029+...+8835=221672) |
-| 104 | 총매도잔량 증감(추정) | 추정 | 이 데이터 구간에선 field[23]과 값이 우연히 일치(레벨1만 변동한 순간이라 그런 것일 수 있음, 완전 확정 아님) |
-| 105 | **총매수잔량** | 확실(수식 검증) | `sum(fields[63..72])`와 정확히 일치 (예: 38646+...+37191=552729) |
-| 106 | 총매수잔량 증감(추정) | 추정 | — |
-| 107-113 | 미확인(항상 0/공백/'0.00', 7개) | 미확인 | VI(변동성완화장치)·예상체결 관련 필드로 추정하나 이 캡처엔 해당 이벤트가 없어 검증 불가 |
-| 114 | 미확인(부호 있는 대형 수치, 예: `+331057`) | 미확인 | 같은 시각 TYPE='B' 레코드의 acc_volume(462112)/acc_value(113879)/market_cap(14440308) 어디와도 안 맞음 — 교차검증 실패 |
-| 115-124 | 대부분 상수 0 (10개) | 미확인 | — |
-| 125 | 총매도잔량 **중복**(=103) | 확실 | 값 일치 확인 |
-| 126 | 상수 0 | 미확인 | — |
-| 127 | 총매수잔량 **중복**(=105) | 확실 | 값 일치 확인 |
+| 0 | Key | `issue_code` | 확실 |
+| 1 | *(없음, sep)* | `sep` ('C') | 확실 — TYPE='B'와 동일 패턴 |
+| 2 | 호가시간 | `trade_time` | 확실 — `HHMMSS` 형식 직접 확인 |
+| 3-12 | 매도가1-10 | `ask_price1..10` | 확실 |
+| 13-22 | 매도량1-10 | `ask_qty1..10` | 확실 |
+| 23-32 | 매도비1-10 | `ask_qty_chg1..10`(추정 명칭) | 확실(존재/위치) — level↑일수록 갱신 빈도 감소 패턴 확인 |
+| 33-42 | K매도량1-10 | `krx_ask_qty1..10` | **확실(수식 검증)** — `ask_qty == krx_ask_qty + nxt_ask_qty` |
+| 43-52 | N매도량1-10 | `nxt_ask_qty1..10` | **확실(수식 검증)** — 위와 동일 |
+| 53-62 | 매수가1-10 | `bid_price1..10` | 확실 |
+| 63-72 | 매수량1-10 | `bid_qty1..10` | 확실 |
+| 73-82 | 매수비1-10 | `bid_qty_chg1..10`(추정 명칭) | 확실(존재/위치) |
+| 83-92 | K매수량1-10 | `krx_bid_qty1..10` | **확실(수식 검증)** |
+| 93-102 | N매수량1-10 | `nxt_bid_qty1..10` | **확실(수식 검증)** |
+| 103 | 매도총량 | `total_ask_qty` | 확실(수식 검증) — `sum(ask_qty1..10)`과 일치, `krx_ask_qty총+nxt_ask_qty총`과도 일치 |
+| 104 | 매도총비 | `total_ask_qty_chg`(추정 명칭) | 확실(존재/위치), 의미는 추정 |
+| 105 | 매수총량 | `total_bid_qty` | 확실(수식 검증) |
+| 106 | 매수총비 | `total_bid_qty_chg`(추정 명칭) | 확실(존재/위치), 의미는 추정 |
+| 107 | 예상가격 | `expected_price` | 확실(존재/위치), 캡처 구간엔 항상 0 |
+| 108 | 예상수량 | `expected_qty` | 확실(존재/위치), 항상 0 |
+| 109 | 예상대비 | `expected_change` | 확실(존재/위치), 항상 0 |
+| 110 | 예상등락 | `expected_change_rate` | 확실(존재/위치), 항상 `0.00` |
+| 111 | 예상대전 | `expected_change_amt` | 확실(존재/위치), 항상 0 |
+| 112 | 예상등전 | `expected_change_amt2`(추정 명칭) | 확실(존재/위치), 항상 공백 |
+| 113 | 차익BASIS | `arbitrage_basis` | 확실(존재/위치), 항상 0 |
+| 114 | 순매수총잔량 | `net_buy_total_qty` | **확실(수식 검증)** — `= total_bid_qty - total_ask_qty` (부호 포함) |
+| 115 | 예상체결량비율 | `expected_fill_qty_ratio` | 확실(존재/위치), 항상 `0.00` |
+| 116 | NXT중간가 | `nxt_mid_price` | 확실(존재/위치), 캡처 구간엔 `-0` |
+| 117 | NXT매도중간가잔량 | `nxt_ask_mid_qty` | 확실(존재/위치), 항상 0 |
+| 118 | NXT매수중간가잔량 | `nxt_bid_mid_qty` | 확실(존재/위치), 항상 0 |
+| 119 | KRX중간가 | `krx_mid_price` | 확실(존재/위치), `-0` |
+| 120 | 매도중간가잔량 | `krx_ask_mid_qty`(추정 — 폐하 사양 원문에 "KRX" 접두어 누락, KRX매수중간가잔량과 대구 이루는 자리) | 확실(존재/위치), 항상 0 |
+| 121 | KRX매수중간가잔량 | `krx_bid_mid_qty` | 확실(존재/위치), 항상 0 |
+| 122 | NXT중간가총순잔량 | `nxt_mid_total_net_qty` | 확실(존재/위치), 항상 0 |
+| 123 | 중간가총순잔량 | `mid_total_net_qty` | 확실(존재/위치), 항상 0 |
+| 124 | KRX매도총잔량 | `krx_total_ask_qty` | **확실(수식 검증)** — `+ wire[125] == wire[103]` |
+| 125 | NXT매도총잔량 | `nxt_total_ask_qty` | **확실(수식 검증)** |
+| 126 | KRX매수총잔량 | `krx_total_bid_qty` | **확실(수식 검증)** — `+ wire[127] == wire[105]` |
+| 127 | NXT매수총잔량 | `nxt_total_bid_qty` | **확실(수식 검증)** |
 
-### 남은 의문
+### 남은 의문 (경미, 구현을 막지 않음)
 
-- 43-52 / 93-102 / 125 / 127의 "중복"이 정말 NXT(넥스트트레이드) 관련인지,
-  아니면 다른 의미(예: 정정 전/후, 장중/시간외)인지 이 캡처만으로는 판별 불가
-  — NXT에서 실제 거래되는 종목의 샘플이 있으면 검증 가능.
-- 33-42 / 83-92 / 107-124 구간은 이 캡처에서 전부(또는 대부분) 비활성이라
-  검증 데이터 자체가 없음.
-- TYPE='D'(80필드, 1146건)도 있어 다른 시세 유형(NXT 전용 호가 또는 시간외
-  호가로 추정)일 가능성이 있으나 이번 분석 범위에는 포함하지 않았음.
+- 23-32/73-82("~비")와 104/106("총비")의 정확한 의미(변동분 vs 비율 vs 증감)는
+  이름만으로 확정하기 애매하나, **위치와 존재 자체는 확실**하므로 필드명은
+  일단 `_chg` 접미사로 잠정 등록하고 실제 트래픽에서 재확인하면 됨.
+- 120번(`매도중간가잔량`)은 폐하 원문에 "KRX" 접두어가 빠진 것으로 보이나
+  119/121과의 대구 구조상 KRX쪽으로 추정 — 확정 규격 재확인 시 정정 가능.
+- TYPE='D'(80필드, 1,146건)는 여전히 분석 범위 밖(별도 시세 유형으로 추정).
 
-### 다음 단계
+### 구현 완료 (2026-09-18)
 
-폐하께서 확정된 규격을 주시면, 위 표를 그 내용으로 교체하고
-`mas_execution_price.lua`와 동일한 패턴(사전 테이블 + `decode` 함수 +
-ProtoField 등록 + `add_*` 핸들러, `E.TYPE_EXEC`처럼 `mas_quote.lua`에
-`TYPE_QUOTE = "C"` 상수 추가)으로 새 파일을 만들고 `mas.by_rts_type["C"] =
-{ add = ..., init = ... }`로 등록하면 된다(§6 파일 구조 참고, `mas_rts.lua`는
-건드릴 필요 없음).
+2026-09-18 `mas_quote_price.lua`로 구현했다. `mas_execution_price.lua`와
+동일한 패턴(필드명 테이블 + `decode` 함수 + ProtoField 등록 + `add_*`
+핸들러)이며, `Q.TYPE_QUOTE = "C"`를 정의해 `mas.by_rts_type["C"] = { add =
+add_quote }`로 등록했다(§6, `mas_rts.lua`는 수정하지 않았음 — 이 refactor
+설계의 목적 그대로 새 파일 하나만 추가). 검증: `Q.decode`를 실제 캡처값
+(M.A006800 기준)으로 재구성한 합성 바디에 돌려 필드값이 정확히 나오는지, 그리고
+Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.qp` 서브트리가
+디코드 성공 레코드에만 태그되는지(필드 개수가 안 맞는 손상된 레코드는 우산
+`mas` + expert info로 폴백), (2) `mas.ep`/기존 동작에 회귀가 없는지, (3) Info
+컬럼(`RTS:n`)이 TYPE='C' 레코드도 정확히 카운트하는지 확인했다(전부 통과,
+저장소 미포함). Statistics 창(MAS/Quote)은 요청 범위 밖이라 만들지 않았다 —
+필요하면 §3.5 참고해 `mas_execution_price.lua`의 `MAS/Execution` 창과 동일한
+패턴으로 추가.
 
 ## 9. 샘플 전체 전문 종류 조사 (2026-09-18)
 
@@ -542,7 +611,7 @@ ProtoField 등록 + `add_*` 핸들러, `E.TYPE_EXEC`처럼 `mas_quote.lua`에
 |---|---|---|---|
 | **B** | 13,494 | 231B | 체결(Execution Price) — 구현됨 |
 | D | 1,146 | 403B | 미확인, §8에서 언급한 80필드 변형(NXT 전용 또는 시간외 호가로 추정) |
-| **C** | 979 | 593B | 호가(Quote) 128필드 — §8에서 분석만 완료, 미구현 |
+| **C** | 979 | 593B | 호가(Quote) 128필드 — §8/§3.5, 구현됨(`mas_quote_price.lua`) |
 | c | 281 | 212B | 미확인 |
 | V | 160 | 80B | 미확인 |
 | Y | 105 | 152B | 미확인 |
@@ -568,7 +637,8 @@ ProtoField 등록 + `add_*` 핸들러, `E.TYPE_EXEC`처럼 `mas_quote.lua`에
 
 ### 9.4 결론
 
-현재 `mas.lua` 플러그인이 완전히 해독하는 것은 **RTS TYPE='B'(체결)**와
-**Transaction MSGK=0x90(주문 결과)** 두 가지뿐이며, 나머지(RTS의 다른 TYPE 10종
-+ 압축 프레임, Transaction의 다른 MSGK 3종)는 모두 헤더 정보 + raw data로만
-표시된다. 이는 §1에서 명시한 설계 결정과 일치하며 새로 발견된 버그는 없다.
+현재 `mas.lua` 플러그인이 완전히 해독하는 것은 **RTS TYPE='B'(체결)**,
+**RTS TYPE='C'(호가)**, **Transaction MSGK=0x90(주문 결과)** 세 가지이며,
+나머지(RTS의 다른 TYPE 9종 + 압축 프레임, Transaction의 다른 MSGK 3종)는
+모두 헤더 정보 + raw data로만 표시된다. 이는 §1에서 명시한 설계 결정과
+일치하며 새로 발견된 버그는 없다.
