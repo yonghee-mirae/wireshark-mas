@@ -12,17 +12,18 @@
 --     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_transaction.lua)
 --   Layer 3  depends on RTS TYPE / Transaction MSGK, one file per decoded
 --   message type: mas_execution_price.lua (RTS TYPE='B'), mas_quote_price.lua
---   (RTS TYPE='C'), mas_order_report.lua (Transaction MSGK=0x90). A new
---   message type decoder is added the same way: its own file, registering
---   into mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
+--   (RTS TYPE='C'), mas_sector_breadth.lua (RTS TYPE='U'), mas_order_report.lua
+--   (Transaction MSGK=0x90). A new message type decoder is added the same way:
+--   its own file, registering into mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
 --
 -- Multi-file plugin (copy ALL into the plugins dir): mas.lua (this), mas_rts.lua,
 -- mas_transaction.lua, mas_execution_price.lua, mas_quote_price.lua,
--- mas_order_report.lua. They coordinate through the shared global `_G.mas`;
--- each layer-2 module registers itself by SESS value (mas.by_sess), each
--- layer-3 module registers itself by TYPE/MSGK (mas.by_rts_type / mas.by_msgk).
--- Only the decoded message types are fully parsed; everything else (other
--- SESS/TYPE/MSGK, compressed, heartbeat, junk) is shown as raw data with the
+-- mas_sector_breadth.lua, mas_order_report.lua. They coordinate through the
+-- shared global `_G.mas`; each layer-2 module registers itself by SESS value
+-- (mas.by_sess), each layer-3 module registers itself by TYPE/MSGK
+-- (mas.by_rts_type / mas.by_msgk). Only the decoded message types are fully
+-- parsed; everything else (other SESS/TYPE/MSGK, compressed, heartbeat,
+-- junk) is shown as raw data with the
 -- header info.
 
 local mas = _G.mas or {}

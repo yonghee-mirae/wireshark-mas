@@ -1,9 +1,9 @@
 # MAS 프로토콜 분석 및 구현 노트
 
 이 문서는 `mas.lua` / `mas_rts.lua` / `mas_transaction.lua` /
-`mas_execution_price.lua` / `mas_quote_price.lua` / `mas_order_report.lua`가
-해석하는 와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한 것이다
-(파일 구조는 §6 참고). 근거는
+`mas_execution_price.lua` / `mas_quote_price.lua` / `mas_sector_breadth.lua` /
+`mas_order_report.lua`가 해석하는 와이어 프로토콜을 이후 확장·수정 시 참고할 수
+있도록 정리한 것이다(파일 구조는 §6 참고). 근거는
 `design/AXIS-4.1.0_Protocol_WTS_ADD.docx`(원 설계 문서, 이하 "설계 문서")와
 `samples/` 아래 두 개의 실제 캡처(`20260915_0809_RTS2.pcapng`,
 `20260915_0809_RTS.pcapng`)를 바이트 단위로 교차 검증한 결과다.
@@ -18,10 +18,11 @@ G/W HEADER (12 bytes)
 ```
 
 캡처 스트림은 `FE FE` 프레임이 NUL 패딩을 사이에 두고 연속으로 이어지는 형태이며,
-이 프로젝트가 지원하는 건 다음 **세 가지 내부 프로토콜뿐**이다:
+이 프로젝트가 지원하는 건 다음 **네 가지 내부 프로토콜뿐**이다:
 
 - **체결 시세 (Execution Price)** — SESS=0x08, RTS-HEADER TYPE=`B`
 - **호가 시세 (Quote Price)** — SESS=0x08, RTS-HEADER TYPE=`C`
+- **업종:등락 (Sector Breadth)** — SESS=0x08, RTS-HEADER TYPE=`U`
 - **실시간 주문 체결 (Order Report)** — SESS=0x01, AXIS-HEADER MSGK=0x90(UMP)
 
 그 외 모든 것(다른 TYPE, 다른 MSGK, 압축, 암호화, heartbeat)은 **헤더에서 알 수
@@ -143,6 +144,32 @@ RTS-HEADER 프레이밍은 §3과 동일(`mas_rts.lua`가 담당). TYPE='C'(호�
   `Unspecified RTS` 라벨과 `mas.qp` 존재 필터로 디코드 성공 여부를 구분한다.
 - Statistics 창: 없음(요청 범위 밖 — 필요해지면 `mas_execution_price.lua`의
   `MAS/Execution` 창과 동일한 패턴으로 추가 가능).
+
+## 3.6. Layer 2/3 — RTS (SESS=0x08), TYPE='U': `mas_sector_breadth.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='U'(업종:등락)는 개별 종목이 아니라
+**시장/업종 전체의 등락 집계**(코스피·코스닥 등)로, 바디는 **10 tab-분리
+필드**: `issue_code, sep, trade_time, up_count, upper_limit_count,
+flat_count, down_count, lower_limit_count, volume, value`.
+
+- 구현 파일: `mas_sector_breadth.lua`. `S.FIELD_NAMES`(10개), `S.decode(body)`
+  (필드 개수가 10이 아니면 `nil`, TYPE='B'/'C'의 `decode`와 동일 패턴).
+  `issue_code`는 종목코드가 아니라 시장/업종 키(예: `KQ001`, `K0001`)라
+  `E.split_market` 같은 접두어 분해는 적용하지 않는다.
+- Proto: `mas.sector.breadth` ("MAS Sector Breadth")
+- 필드: `mas.sector.breadth.<field>` (10필드 중 `sep` 제외).
+- `mas.by_rts_type["U"]`에 등록 — 디코드 성공 여부에 따라 서브트리 proto를
+  직접 선택(성공: `mas.sector.breadth`, 실패: 우산 `mas` + expert info. §4.7 원칙과
+  동일).
+- 검증: `up_count + upper_limit_count + flat_count + down_count +
+  lower_limit_count`가 `K0001` 표본(6건) 전부 정확히 **801**, `KQ001`
+  표본(6건)은 **1521~1523**(종목이 상승↔보합↔하락 카테고리를 넘나드는
+  정상적인 틱 변동) — 각각 코스피/코스닥 상장종목 수와 부합해 필드 매핑을
+  확증. 다만 표본이 종목(키) 2개·12건뿐이라 §8(979건)만큼의 통계적 신뢰도는
+  아님.
+- Info 라벨: 별도 라벨 없음, TYPE='B'/'C'와 동일하게 Info 컬럼엔 `RTS`로만
+  집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
 
 ## 4. Layer 2/3 — Transaction (SESS=0x01): `mas_transaction.lua`(프레이밍) + `mas_order_report.lua`(MSGK=0x90 디코드)
 
@@ -370,7 +397,7 @@ Decode As와 상충한다.
 |---|---|---|
 | RTS 압축 | CHCK bit `0x02` | LZO 압축, 라이브러리/구현 없음 → `mas.data` |
 | Transaction 암호화 | ACTF bit `0x02` | Xecure/XecureMobile 구간암호화, 키 없음 → `mas.data` |
-| RTS TYPE ≠ 'B'/'C' | D/U/Y/Z/c/m/y/V/F 등 | 레이아웃 미상, 요청 범위 밖 → KIND/TYPE/LENGTH만 표시 + `mas.data` |
+| RTS TYPE ≠ 'B'/'C'/'U' | D/Y/Z/c/m/y/V/F 등 | 레이아웃 미상, 요청 범위 밖 → KIND/TYPE/LENGTH만 표시 + `mas.data` |
 | Transaction MSGK ≠ 0x90 | Normal/RTS-on-off/Dialog/Error/키교환 등 | 요청 범위 밖(주문체결·체결시세만 지원) → AXIS-HEADER만 표시 + `mas.data` |
 | Heartbeat | CTRL=`0x04` | 데이터 없음, 상세창·Info 모두 `Heartbeat` |
 
@@ -393,8 +420,8 @@ Decode As와 상충한다.
 `mas_order_report.lua`가 SESS 계층 프레이밍까지 함께 떠안고 있어서, 새 TYPE/MSGK
 디코더를 추가하려면 `mas.by_sess[SESS]`가 핸들러 하나만 허용하는 구조와 충돌했다.
 지금은 각 디코더가 자기 파일 하나로 독립적으로 추가/삭제될 수 있다 — 같은 날
-바로 이어서 `mas_quote_price.lua`(TYPE='C')를 기존 파일들 수정 없이 추가한 게
-그 효과의 실증이다.
+바로 이어서 `mas_quote_price.lua`(TYPE='C')와 `mas_sector_breadth.lua`
+(TYPE='U')를 기존 파일들 수정 없이 추가한 게 그 효과의 실증이다.
 
 | 파일 | 계층 | 역할 |
 |---|---|---|
@@ -403,6 +430,7 @@ Decode As와 상충한다.
 | `mas_transaction.lua` | 2 (Transaction) | SESS=0x01 등록, AXIS-HEADER 파싱, 공용 헤더 필드(`mas.axis.*`), MSGK별 디스패치(`mas.by_msgk`), 미등록/암호화 MSGK의 "Unspecified Transaction" 표시 |
 | `mas_execution_price.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.ep.*` 필드, MAS/Execution 창. `mas.by_rts_type["B"]`에 등록 |
 | `mas_quote_price.lua` | 3 (RTS TYPE='C') | 호가 시세 디코드, `mas.qp.*` 필드. `mas.by_rts_type["C"]`에 등록 (§3.5) |
+| `mas_sector_breadth.lua` | 3 (RTS TYPE='U') | 업종:등락 디코드, `mas.sector.breadth.*` 필드. `mas.by_rts_type["U"]`에 등록 (§3.6) |
 | `mas_order_report.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.or.*` 필드, MAS/Order 창. `mas.by_msgk[0x90]`에 등록 |
 
 - 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
@@ -430,7 +458,7 @@ Decode As와 상충한다.
   새 파일을 만들어 `mas.by_rts_type[TYPE] = {...}`를 등록하고, Transaction이면
   새 파일에서 `mas.by_msgk[해당MSGK] = {...}`를 등록하면 된다 — `mas_rts.lua`/
   `mas_transaction.lua`는 건드릴 필요 없다.
-- 배포 시 **여섯 파일 모두** 플러그인 디렉터리에 복사해야 한다. 2계층 파일이
+- 배포 시 **일곱 파일 모두** 플러그인 디렉터리에 복사해야 한다. 2계층 파일이
   없으면 해당 SESS 전체가 raw data로만 보이고, 3계층 파일이 없으면 그 TYPE/
   MSGK만 "Unspecified"로 보인다.
 
@@ -480,6 +508,14 @@ Transaction 1 + heartbeat 1)에 대해 `mas.proto.dissector`를 직접 호출해
 필드값이 정확한지, (6) 두 번째 프레임에서 낮은 `acc_volume`을 보내 reversal
 탐지가 `mas.by_rts_type["B"].init` 훅을 거쳐도 여전히 동작하는지. 전부 통과.
 저장소에는 미포함(세션 내 스크래치패드).
+
+**2026-09-18 `mas_sector_breadth.lua`(TYPE='U') 검증**: `mas_quote_price.lua`
+검증과 같은 방식 — 실제 캡처값(`KQ001` 레코드)으로 재구성한 합성 바디를
+`S.decode`에 직접 돌려 필드값과 `up+upperLimit+flat+down+lowerLimit=1523`
+항등식을 확인했고, Wireshark 스텁으로 `mas.proto.dissector`를 호출해
+(1) `mas.by_rts_type["U"]` 등록, (2) 정상 레코드만 `mas.sector.breadth`로 태그되고
+필드 개수가 안 맞는 레코드는 우산 `mas`+expert로 폴백하는지, (3) Info 컬럼
+(`RTS:2`)이 정확한지 확인했다. 전부 통과. 저장소 미포함.
 
 ## 8. 호가 시세(RTS TYPE='C') 필드 맵 — ✅ 확정, ✅ 구현됨 (`mas_quote_price.lua`)
 
@@ -617,7 +653,7 @@ Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.qp` 서�
 | Y | 105 | 152B | 미확인 |
 | Z | 105 | 158B | 미확인 |
 | m | 56 | 164B | 미확인 |
-| U | 12 | 45B | 미확인 (예: `KQ001\tU\t183500\t829...`) |
+| U | 12 | 45B | 업종:등락(Sector Breadth) — §3.6, 구현됨(`mas_sector_breadth.lua`) |
 | F | 3 | 446B | 미확인 |
 | y | 2 | 369B | 미확인 |
 
@@ -638,7 +674,7 @@ Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.qp` 서�
 ### 9.4 결론
 
 현재 `mas.lua` 플러그인이 완전히 해독하는 것은 **RTS TYPE='B'(체결)**,
-**RTS TYPE='C'(호가)**, **Transaction MSGK=0x90(주문 결과)** 세 가지이며,
-나머지(RTS의 다른 TYPE 9종 + 압축 프레임, Transaction의 다른 MSGK 3종)는
-모두 헤더 정보 + raw data로만 표시된다. 이는 §1에서 명시한 설계 결정과
-일치하며 새로 발견된 버그는 없다.
+**RTS TYPE='C'(호가)**, **RTS TYPE='U'(업종:등락)**, **Transaction
+MSGK=0x90(주문 결과)** 네 가지이며, 나머지(RTS의 다른 TYPE 8종 + 압축 프레임,
+Transaction의 다른 MSGK 3종)는 모두 헤더 정보 + raw data로만 표시된다. 이는
+§1에서 명시한 설계 결정과 일치하며 새로 발견된 버그는 없다.
