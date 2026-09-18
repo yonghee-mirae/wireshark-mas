@@ -1,18 +1,15 @@
--- MAS RTS (실시간시세, G/W SESS=0x08) stream module.
+-- MAS RTS TYPE='B' (체결, Execution Price) decoder.
 --
--- RTS payload (the G/W frame's LENGTH-bytes body) is a repeated RTS-DATA record:
---   KIND(1) DUMY(1) TYPE(1) LENGTH(3 ASCII) DATA(LENGTH, trailing NUL included)
--- KIND: 'D' data / 'I' symbol list. TYPE selects the record layout; of these, only
--- TYPE='B' (체결, Execution Price, 39 tab-separated fields) is decoded here — the
--- only inner protocol this plugin supports besides order report. Every other TYPE
--- is shown as raw data, with KIND/TYPE/LENGTH displayed from the RTS-HEADER.
+-- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is a
+-- 39-field tab-separated body. This is the only RTS TYPE this plugin decodes;
+-- every other TYPE is left to mas_rts.lua's generic "Unspecified RTS" handling.
 --
 -- Pure helpers (decode/reversal, required by tests) + Wireshark registration +
 -- the MAS/Execution Statistics window. Coordinates with core via _G.mas.
 
 local mas = _G.mas or {}
 _G.mas = mas
-mas.by_sess = mas.by_sess or {}
+mas.by_rts_type = mas.by_rts_type or {}
 
 local E = {}   -- module table: pure helpers (returned for tests)
 
@@ -78,27 +75,6 @@ function E.decode(body)
   return rec
 end
 
--- Split an RTS payload into RTS-DATA records: { {kind,dumy,type,len,body,off}, ... }.
--- `off` is the 0-based offset of the record within the payload. Stops (without
--- error) at the first malformed record; callers show the remainder as raw data.
-function E.split_records(payload)
-  local recs = {}
-  local i, n = 0, #payload
-  while i + 6 <= n do
-    local ls = payload:sub(i + 4, i + 6)
-    if not ls:match("^%d%d%d$") then break end
-    local L = tonumber(ls)
-    if i + 6 + L > n then break end
-    recs[#recs + 1] = {
-      kind = payload:sub(i + 1, i + 1), dumy = payload:sub(i + 2, i + 2),
-      type = payload:sub(i + 3, i + 3), len = L,
-      body = payload:sub(i + 7, i + 6 + L), off = i,
-    }
-    i = i + 6 + L
-  end
-  return recs, i   -- i = bytes consumed; payload:sub(i+1) is any unparsed tail
-end
-
 -- Stateful reversal detector. eval() is idempotent per seq_index so that
 -- Wireshark's multi-pass dissection yields stable results. Grouping is scoped
 -- to (flow, market, issue_code) so analysis only compares messages sharing the
@@ -133,15 +109,10 @@ end
 if _G.Proto then
   local proto_ex = Proto("mas.ep", "MAS Execution Price")   -- filter: mas.ep
 
-  -- RTS-HEADER fields (common to every RTS-DATA record).
-  local pf_h = {
-    kind = ProtoField.string("mas.ep.kind", "kind"),
-    type = ProtoField.string("mas.ep.type", "type"),
-    len  = ProtoField.uint32("mas.ep.reclen", "length"),
-  }
-
   -- Register 39 string fields as mas.ep.<key> (sep omitted), plus derived fields.
-  local pf = { kind = pf_h.kind, type = pf_h.type, reclen = pf_h.len }
+  -- RTS-HEADER (KIND/TYPE/LENGTH) fields live in mas_rts.lua (mas.rts.*), shared
+  -- across every RTS TYPE decoder.
+  local pf = {}
   for _, name in ipairs(E.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
       pf[name] = ProtoField.string("mas.ep." .. name, name)
@@ -164,22 +135,17 @@ if _G.Proto then
 
   local reversal = E.new_reversal()
 
-  -- Add one RTS-DATA record's header fields (KIND/TYPE/LENGTH) under `sub`.
-  local function add_record_header(sub, tvb, poff, r)
-    sub:add(pf.kind, tvb(poff + r.off, 1))
-    sub:add(pf.type, tvb(poff + r.off + 2, 1))
-    sub:add(pf.reclen, tvb(poff + r.off + 3, 3), r.len)
-  end
-
   -- Decode a TYPE='B' execution record body into the tree, incl. reversal detection.
   -- Decode first so the subtree's own protocol is proto_ex (mas.ep) ONLY on success;
   -- a malformed TYPE='B' body (wrong field count) is tagged with the umbrella `mas`
   -- instead, so the mas.ep presence filter means "a real execution record here".
+  -- Registered into mas.by_rts_type[E.TYPE_EXEC] below; called by mas_rts.lua's
+  -- generic RTS dispatcher with the signature it expects.
   local function add_exec(tree, tvb, poff, r, pinfo, msg_index)
     local rec = E.decode(r.body)
     local sub = tree:add(rec and proto_ex or mas.proto, tvb(poff + r.off, 6 + r.len),
       "Execution Price (" .. r.len .. " bytes)")
-    add_record_header(sub, tvb, poff, r)
+    mas.rts_add_header(sub, tvb, poff, r)
     if not rec then
       sub:add_proto_expert_info(expert_badfields)
       return false
@@ -201,31 +167,10 @@ if _G.Proto then
     return true
   end
 
-  -- SESS=0x08 (RTS) handler: split the payload into RTS-DATA records; decode
-  -- TYPE='B' as execution, everything else (other TYPE, unparsed tail) as data
-  -- with its RTS-HEADER fields still shown. Returns the number of RTS-DATA
-  -- records contained (Execution Price and Unspecified RTS both count) — a
-  -- single RTS G/W frame's payload is a repeated RTS-HEADER+RTS-DATA, so this
-  -- is what mas.lua's Info column reports for "RTS:n", not a flat 1-per-frame.
-  local function add_rts(gw, tvb, poff, plen, payload, pinfo)
-    local recs, consumed = E.split_records(payload)
-    for idx, r in ipairs(recs) do
-      if r.type == E.TYPE_EXEC then
-        add_exec(gw, tvb, poff, r, pinfo, idx)
-      else
-        -- Not TYPE='B': tag with the umbrella `mas`, not proto_ex, so mas.ep stays
-        -- a "genuine execution record here" presence filter.
-        local sub = gw:add(mas.proto, tvb(poff + r.off, 6 + r.len),
-          "Unspecified RTS (" .. r.len .. " bytes)")
-        add_record_header(sub, tvb, poff, r)
-        if r.len > 0 then sub:add(mas.pf_data, tvb(poff + r.off + 6, r.len)) end
-      end
-    end
-    if consumed < plen then gw:add(mas.pf_data, tvb(poff + consumed, plen - consumed)) end
-    return #recs
-  end
-
-  mas.by_sess[mas.SESS_RTS] = { add = add_rts, init = function() reversal:reset() end }
+  -- Register as the TYPE='B' decoder; mas_rts.lua's generic dispatcher calls
+  -- this for every TYPE='B' record and falls back to "Unspecified RTS" itself
+  -- for any other TYPE.
+  mas.by_rts_type[E.TYPE_EXEC] = { add = add_exec, init = function() reversal:reset() end }
 end
 
 if gui_enabled() then

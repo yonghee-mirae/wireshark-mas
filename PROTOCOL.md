@@ -1,7 +1,9 @@
 # MAS 프로토콜 분석 및 구현 노트
 
-이 문서는 `mas.lua` / `mas_execution_price.lua` / `mas_order_report.lua`가 해석하는
-와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한 것이다. 근거는
+이 문서는 `mas.lua` / `mas_rts.lua` / `mas_transaction.lua` /
+`mas_execution_price.lua` / `mas_order_report.lua`가 해석하는
+와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한 것이다(파일 구조는
+§6 참고). 근거는
 `design/AXIS-4.1.0_Protocol_WTS_ADD.docx`(원 설계 문서, 이하 "설계 문서")와
 `samples/` 아래 두 개의 실제 캡처(`20260915_0809_RTS2.pcapng`,
 `20260915_0809_RTS.pcapng`)를 바이트 단위로 교차 검증한 결과다.
@@ -67,7 +69,7 @@ raw data로 처리된다(디스패치보다 먼저 검사).
   100% 동일한 결과가 나오는 것으로 검증했다 (세션 내 임시 테스트, 저장소에는
   미포함 — §6 참고).
 
-## 3. Layer 2-A — RTS (SESS=0x08), `mas_execution_price.lua`
+## 3. Layer 2/3 — RTS (SESS=0x08): `mas_rts.lua`(프레이밍) + `mas_execution_price.lua`(TYPE='B' 디코드)
 
 RTS payload는 **RTS-HEADER(6) + RTS-DATA**의 반복이다 (설계 문서 §1.3):
 
@@ -111,7 +113,8 @@ static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
 - Proto: `mas.ep` ("MAS Execution Price")
 - 필드: `mas.ep.<field>` (39필드 중 `sep` 제외), `mas.ep.market`,
   `mas.ep.acc_volume_num`, `mas.ep.price_num`, `mas.ep.trade_volume_num`,
-  `mas.ep.reversed`, RTS-HEADER용 `mas.ep.kind`/`mas.ep.type`/`mas.ep.reclen`.
+  `mas.ep.reversed`. RTS-HEADER 공용 필드는 `mas.rts.kind`/`mas.rts.type`/
+  `mas.rts.reclen`(`mas_rts.lua` 소유, 모든 RTS TYPE 레코드에 공통 적용).
 - Info 라벨: 별도 라벨 없음 — RTS(SESS=0x08) 프레임은 TYPE·디코드 성공 여부와
   무관하게 Info 컬럼에 `RTS`로만 집계된다(§4.6 참고). "체결이 실제로
   디코드됐는가"는 상세창의 `Execution Price` vs `Unspecified RTS` 라벨과
@@ -119,7 +122,7 @@ static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
 - Statistics 창: **MAS/Execution** — Market/Issue/Time/Price/TrdVol/AccVol/Reversed
   컬럼, 5-tuple(Flow) 별 구분.
 
-## 4. Layer 2-B — Transaction (SESS=0x01), `mas_order_report.lua`
+## 4. Layer 2/3 — Transaction (SESS=0x01): `mas_transaction.lua`(프레이밍) + `mas_order_report.lua`(MSGK=0x90 디코드)
 
 Transaction payload는 **AXIS-HEADER(24) + TR-DATA** (설계 문서 §1.2):
 
@@ -168,9 +171,10 @@ MSGK(1) ACTF(1) CHKF(1) XWIN(1) YWIN(1) KEYV(2) SVCC(4) TRNM(8) LENGTH(5, ASCII)
 ### Wireshark 매핑
 
 - Proto: `mas.or` ("MAS Order Report")
-- AXIS-HEADER 필드: `mas.or.msgk`(value-string 포함), `mas.or.actf`,
-  `mas.or.encrypted`(파생 bool), `mas.or.svcc`, `mas.or.trnm`, `mas.or.length`.
-- 코드 필드: `mas.or.<code>` (46개), `mas.or.unknown`.
+- 코드 필드: `mas.or.<code>` (46개), `mas.or.unknown`. AXIS-HEADER 공용 필드는
+  `mas.axis.msgk`(value-string 포함)/`mas.axis.actf`/`mas.axis.encrypted`(파생
+  bool)/`mas.axis.svcc`/`mas.axis.trnm`/`mas.axis.length`(`mas_transaction.lua`
+  소유, 모든 Transaction MSGK에 공통 적용).
 - Info 라벨: 별도 라벨 없음 — Transaction(SESS=0x01) 프레임은 MSGK·디코드 성공
   여부와 무관하게 Info 컬럼에 `Transaction`으로만 집계된다(§4.6 참고). "주문
   체결통보가 실제로 디코드됐는가"는 상세창의 `Order Report` vs
@@ -209,7 +213,8 @@ MSGK(1) ACTF(1) CHKF(1) XWIN(1) YWIN(1) KEYV(2) SVCC(4) TRNM(8) LENGTH(5, ASCII)
   이들은 `tvbrange`만 넘겨도(`tree:add(field, tvbrange)`) 올바르게
   해석된다 — 파싱이 필요 없다.
 
-**과거 발견된 버그**: `mas_order_report.lua`의 AXIS-HEADER `LENGTH(5)` 필드가
+**과거 발견된 버그**: AXIS-HEADER `LENGTH(5)` 필드가(당시 `mas_order_report.lua`
+소유, 2026-09-18 리팩터로 `mas_transaction.lua`로 이동 — §6 참고)
 `ProtoField.uint32`로 등록되어 있었는데, 파싱한 값 없이 5바이트 ASCII
 tvbrange를 그대로 넘기고 있었다(같은 파일의 다른 두 LENGTH 필드는 이미 올바른
 패턴을 쓰고 있었음). `add_axis_header()`에서 `tvb(poff+19,5):string()`을
@@ -262,21 +267,21 @@ tvbrange를 그대로 넘기고 있었다(같은 파일의 다른 두 LENGTH 필
 
 구현은 `mas.lua`의 dissector 루프에서, RTS/Transaction 프레임에 대해
 `mas.by_sess[sess].add(...)`가 **담긴 메시지 개수를 반환**하도록 하고(RTS는
-`mas_execution_price.lua`의 `add_rts`가 `#recs`를 반환, Transaction은
-`mas_order_report.lua`의 `add_transaction`이 반환값 없이 `nil`→기본값 1로
-처리) 그 값을 `cnt.RTS`/`cnt.Transaction`에 더한다. 압축 프레임이나 핸들러가
-없는 경우는 기본값 1을 그대로 쓴다. 스트림 모듈은 더 이상 Info 라벨 자체에
-관여하지 않으며, 예전에 있던 `note(label, c)` 콜백 파라미터는 완전히
-제거했다. **Info 표시를 바꾸려면 `mas.lua`의 이 카운팅 블록과, RTS의 경우
-`add_rts`의 반환값 계산 부분을 고치면 된다.**
+`mas_rts.lua`의 `add_rts`가 `#recs`를 반환, Transaction은 `mas_transaction.lua`의
+`add_transaction`이 반환값 없이 `nil`→기본값 1로 처리) 그 값을
+`cnt.RTS`/`cnt.Transaction`에 더한다. 압축 프레임이나 핸들러가 없는 경우는
+기본값 1을 그대로 쓴다. TYPE='B'/MSGK=0x90 디코더(`mas_execution_price.lua`/
+`mas_order_report.lua`)는 Info 라벨이나 카운팅에 전혀 관여하지 않는다 — 그건
+2계층 파일(`mas_rts.lua`/`mas_transaction.lua`)과 `mas.lua`만의 책임이다.
+**Info 표시를 바꾸려면 `mas.lua`의 이 카운팅 블록과, RTS의 경우
+`mas_rts.lua`의 `add_rts` 반환값 계산 부분을 고치면 된다.**
 
 ## 4.7. `mas.ep`/`mas.or` 존재 필터는 반드시 "진짜 디코드 성공"에만 매칭돼야 한다
 
 **과거 발견된 버그**: Wireshark에서 `mas.ep`(체결 시세)나 `mas.or`(주문 체결
 통보) 같은 바깥(bare) 프로토콜 필터는 "이 프레임에 해당 프로토콜의
-`tree:add(proto_x, ...)` 트리 항목이 있는가"로 판정된다. 그런데
-`mas_execution_price.lua`의 "Unspecified RTS" 서브트리(TYPE≠'B')와
-`mas_order_report.lua`의 "Unspecified Transaction" 서브트리(MSGK≠0x90/암호화)가
+`tree:add(proto_x, ...)` 트리 항목이 있는가"로 판정된다. 그런데 "Unspecified
+RTS" 서브트리(TYPE≠'B')와 "Unspecified Transaction" 서브트리(MSGK≠0x90/암호화)가
 **전부 `proto_ex`/`proto_or`(즉 `mas.ep`/`mas.or`)로 태그되어 있었다** — 라벨
 문자열만 "Unspecified ..."로 바꿨을 뿐, 서브트리를 만드는 `tree:add()`의
 첫 인자(proto)는 그대로 둔 채였다. 결과적으로 `mas.ep` 필터는 "체결
@@ -287,16 +292,21 @@ tvbrange를 그대로 넘기고 있었다(같은 파일의 다른 두 LENGTH 필
 `proto_ex`를 그대로 썼다.
 
 **수정**: 미해독/디코드 실패 서브트리는 자식 proto 대신 **우산 proto
-(`mas.proto`, `mas.lua`에서 `mas.proto = proto`로 공개)**로 태그한다.
+(`mas.proto`, `mas.lua`에서 `mas.proto = proto`로 공개)**로 태그한다. 이
+원칙은 2026-09-18 파일 분리 리팩터(§6) 이후에도 그대로 유지된다 — 서브트리
+생성(그리고 proto 선택) 책임이 3계층 파일에 있기 때문:
 - `mas_execution_price.lua`: `add_exec`은 **먼저 `E.decode()`를 호출한 뒤**
   성공 여부에 따라 `proto_ex`(성공) 또는 `mas.proto`(실패)로 서브트리를
-  만든다. "Unspecified RTS" 분기(TYPE≠'B')도 `mas.proto`를 쓴다.
+  만든다. `mas_rts.lua`의 "Unspecified RTS" 분기(등록되지 않은 TYPE)도
+  `mas.proto`를 쓴다.
 - `mas_order_report.lua`: MSGK/ACTF를 미리 확인한 `will_decode` 불리언으로
-  `proto_or`(디코드 예정) vs `mas.proto`(미해독)를 선택해 서브트리를 만든다.
+  `proto_or`(디코드 예정) vs `mas.proto`(미해독)를 선택해 서브트리를 만드는
+  건 이제 `mas_transaction.lua`의 `add_transaction`이 `mas.by_msgk` 레지스트리를
+  보고 수행한다.
 
-이렇게 해도 **개별 필드 필터는 영향이 없다** — 예를 들어 `mas.ep.type`이나
-`mas.or.msgk` 같은 필드는 서브트리가 어느 proto에 속하든 실제 바이트에서
-정확히 추출되어 항상 채워지므로 그대로 정확히 동작한다(RTS-HEADER/
+이렇게 해도 **개별 필드 필터는 영향이 없다** — 예를 들어 `mas.rts.type`이나
+`mas.axis.msgk` 같은 공용 헤더 필드는 서브트리가 어느 proto에 속하든 실제
+바이트에서 정확히 추출되어 항상 채워지므로 그대로 정확히 동작한다(RTS-HEADER/
 AXIS-HEADER는 레코드/트랜잭션 공통 헤더라 TYPE·MSGK와 무관하게 항상 존재).
 바뀌는 것은 오직 **"필드 접두어 없이 바로 쓰는 존재 필터(`mas.ep`, `mas.or`
 자체)"**뿐이다. **새로운 "Unspecified" 계열 표시를 추가할 때는 항상 이
@@ -344,9 +354,11 @@ Decode As와 상충한다.
 
 이 영역들을 추후 확장하려면:
 1. 해당 레이아웃(필드 사전 또는 위치 스키마)을 확보한다.
-2. `mas_execution_price.lua`(RTS TYPE 추가) 또는 `mas_order_report.lua`
-   (다른 MSGK 추가)에 위 코드/체결 모듈과 같은 패턴(사전 테이블 + decode 함수 +
-   ProtoField 등록 + `add_*` 함수)으로 핸들러를 늘린다.
+2. `mas_execution_price.lua`/`mas_order_report.lua`와 같은 패턴(사전 테이블 +
+   decode 함수 + ProtoField 등록 + `add_*` 함수)으로 **새 파일**을 만들고,
+   RTS TYPE이면 `mas.by_rts_type[TYPE]`에, Transaction MSGK이면
+   `mas.by_msgk[MSGK]`에 등록한다(§6). `mas_rts.lua`/`mas_transaction.lua`는
+   건드릴 필요 없다.
 3. 압축/암호화 해제가 가능해지면, `mas.lua`의 `CHCK bit 0x02`/`ACTF bit 0x02`
    분기에서 raw로 처리하기 전에 압축해제/복호화 함수를 끼워 넣고, 그 결과를 다시
    `mas.scan`(RTS의 경우 이미 페이로드 형태) 또는 해당 스트림 모듈의 파서에
@@ -354,20 +366,48 @@ Decode As와 상충한다.
 
 ## 6. 파일 구조와 조율 방식
 
-| 파일 | 역할 |
-|---|---|
-| `mas.lua` | G/W 헤더 프레이밍(`mas.scan`), 우산 proto(`mas`) + dissector, TCP 재조립, Info 컬럼 소유, 공용 Statistics 창(`mas.open_stream_window`) |
-| `mas_execution_price.lua` | RTS(SESS=0x08) 핸들러: RTS-HEADER 파싱, TYPE='B' 디코드, MAS/Execution 창 |
-| `mas_order_report.lua` | Transaction(SESS=0x01) 핸들러: AXIS-HEADER 파싱, MSGK=0x90 디코드, MAS/Order 창 |
+2026-09-18 리팩터: "SESS 계층 프레이밍/디스패치"와 "TYPE/MSGK별 실제 디코더"를
+분리해 **3계층 5파일** 구조로 재구성했다. 이전에는 `mas_execution_price.lua`/
+`mas_order_report.lua`가 SESS 계층 프레이밍까지 함께 떠안고 있어서, 새 TYPE/MSGK
+디코더를 추가하려면 `mas.by_sess[SESS]`가 핸들러 하나만 허용하는 구조와 충돌했다.
+지금은 각 디코더가 자기 파일 하나로 독립적으로 추가/삭제될 수 있다.
 
-- 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 스트림 모듈이
-  `mas.by_sess[SESS값] = { add = ..., init = ... }`을 스스로 등록한다 — **로드
-  순서 독립적**(어느 파일이 먼저 로드돼도 동작).
-- `add(gw, tvb, poff, plen, payload, pinfo, note)`의 `note(label, count)`
-  콜백으로 각 핸들러가 Info 컬럼에 표시할 라벨/건수를 직접 기록한다(한 프레임에
-  체결과 기타 TYPE이 섞여도 정확히 집계됨).
-- 배포 시 **세 파일 모두** 플러그인 디렉터리에 복사해야 한다. `mas.lua`만
-  있으면 SESS별 핸들러가 없어 해당 데이터가 전부 raw로만 보인다.
+| 파일 | 계층 | 역할 |
+|---|---|---|
+| `mas.lua` | 1 (G/W) | G/W 헤더 프레이밍(`mas.scan`), 우산 proto(`mas`) + dissector, TCP 재조립, Info 컬럼 소유, 공용 Statistics 창(`mas.open_stream_window`) |
+| `mas_rts.lua` | 2 (RTS) | SESS=0x08 등록, RTS-HEADER 파싱(`split_records`), 공용 헤더 필드(`mas.rts.*`), TYPE별 디스패치(`mas.by_rts_type`), 미등록 TYPE의 "Unspecified RTS" 표시 |
+| `mas_transaction.lua` | 2 (Transaction) | SESS=0x01 등록, AXIS-HEADER 파싱, 공용 헤더 필드(`mas.axis.*`), MSGK별 디스패치(`mas.by_msgk`), 미등록/암호화 MSGK의 "Unspecified Transaction" 표시 |
+| `mas_execution_price.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.ep.*` 필드, MAS/Execution 창. `mas.by_rts_type["B"]`에 등록 |
+| `mas_order_report.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.or.*` 필드, MAS/Order 창. `mas.by_msgk[0x90]`에 등록 |
+
+- 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
+  방어적으로 초기화한다(`mas.by_sess = mas.by_sess or {}` 등) — **로드 순서
+  독립적**(어느 파일이 먼저 로드돼도 동작. 실제 등록은 파일 로드 시점에
+  일어나지만, 등록된 함수가 호출되는 건 항상 모든 파일이 로드된 뒤인 패킷
+  디섹션 시점이라 순서에 의존하지 않는다).
+- 2계층 파일(`mas_rts.lua`/`mas_transaction.lua`)의 `add(gw, tvb, poff, plen,
+  payload, pinfo)`가 실제 Info 컬럼 집계용 반환값(포함된 메시지 수)을
+  `mas.lua`에 돌려준다 — RTS는 레코드 수(`#recs`), Transaction은 프레임당 항상
+  1개라 반환하지 않고 `mas.lua`가 기본값 1을 쓴다.
+- 3계층 파일이 등록하는 값의 형태:
+  - RTS: `mas.by_rts_type[TYPE] = { add = function(gw, tvb, poff, r, pinfo, idx) ... end, init = ... }`.
+    성공/실패에 따라 자기 proto(`mas.ep`)냐 우산 proto(`mas`)냐를 **직접 골라
+    서브트리를 만드는 것까지 3계층 파일의 책임**이다(TYPE='B'라도 필드 개수가
+    안 맞으면 디코드 실패 → `mas` 태그. §4.7 참고). 그래서 2계층 파일은 헤더
+    필드 추가 헬퍼(`mas.rts_add_header`)만 제공하고 서브트리 생성은 넘겨준다.
+  - Transaction: `mas.by_msgk[MSGK] = { title = "...", proto = protoObj, add =
+    function(sub, tvb, poff, plen, pinfo) ... end }`. Order Report는 디코드가
+    구조적으로 실패하지 않으므로(`decode_order`가 항상 성공), 2계층 파일이
+    MSGK/암호화 여부만으로 proto를 미리 정하고 서브트리를 만든 뒤 3계층
+    파일에 넘겨도 안전하다 — TYPE='B'와의 이 차이가 두 디스패치 패턴이
+    다른 이유다.
+- 새 메시지 타입을 추가하려면: RTS면 `mas_quote.lua` 같은 새 파일을 만들어
+  `mas.by_rts_type["C"] = {...}`를 등록하고, Transaction이면 새 파일에서
+  `mas.by_msgk[해당MSGK] = {...}`를 등록하면 된다 — `mas_rts.lua`/
+  `mas_transaction.lua`는 건드릴 필요 없다.
+- 배포 시 **다섯 파일 모두** 플러그인 디렉터리에 복사해야 한다. 2계층 파일이
+  없으면 해당 SESS 전체가 raw data로만 보이고, 3계층 파일이 없으면 그 TYPE/
+  MSGK만 "Unspecified"로 보인다.
 
 ## 7. 검증 이력 (참고용, 저장소에는 미포함)
 
@@ -375,8 +415,9 @@ Decode As와 상충한다.
 저장소에는 커밋하지 않았다. 향후 정식 회귀 테스트로 승격하려면 다음을
 재현하면 된다:
 
-1. **순수 로직 검증**: `mas.scan` + `E.decode`/`E.split_records` +
-   `O.decode_order`를 두 샘플 캡처의 실제 스트림 바이트(포트 15201 발신)에
+1. **순수 로직 검증**: `mas.scan` + `R.split_records`(`mas_rts.lua`)/`E.decode`
+   (`mas_execution_price.lua`) + `O.decode_order`를 두 샘플 캡처의 실제 스트림
+   바이트(포트 15201 발신)에
    대해 실행 — junk 0건, 체결 디코드 실패 0건, 주문 리포트 디코드 성공 건수
    일치 확인.
 2. **재조립 시뮬레이션**: 같은 스트림을 1/7/37/173/4096바이트 청크로 인위
@@ -399,14 +440,30 @@ Decode As와 상충한다.
 이 환경에서 실행할 수 없어 **로직·프레이밍 수준까지만** 검증됐다. 실제
 Wireshark에 로드해 트리·필터·Statistics 창을 확인하는 것이 남은 검증 단계다.
 
+**2026-09-18 파일 분리 리팩터(§6) 검증**: 위 4번과 같은 방식의 최소 Wireshark
+API 스텁(`Proto`/`ProtoField`/`Tvb`/`TreeItem`을 흉내낸 테이블)으로 다섯
+파일을 실제 로드 순서(`mas.lua`→`mas_execution_price.lua`→
+`mas_order_report.lua`→`mas_rts.lua`→`mas_transaction.lua`)대로 dofile한 뒤,
+합성 스트림(체결 레코드 1 + 미해독 RTS TYPE 1 + 주문 리포트 1 + 미해독
+Transaction 1 + heartbeat 1)에 대해 `mas.proto.dissector`를 직접 호출해
+확인했다: (1) `mas.by_sess`/`mas.by_rts_type`/`mas.by_msgk` 등록이 모두
+이뤄지는지, (2) 예외 없이 전체 버퍼를 소비하는지, (3) Info 컬럼이
+`RTS:2 Transaction:2 Heartbeat`로 정확히 집계되는지, (4) `mas.ep`/`mas.or`
+서브트리가 각각 정확히 1개씩만(디코드 성공 레코드만) 태그되고 나머지는
+전부 우산 `mas`로 태그되는지, (5) `mas.ep.price`/`mas.rts.type`/
+`mas.axis.length`(char[] 파싱 결과가 정수인지)/`mas.or.950`/`mas.or.952`
+필드값이 정확한지, (6) 두 번째 프레임에서 낮은 `acc_volume`을 보내 reversal
+탐지가 `mas.by_rts_type["B"].init` 훅을 거쳐도 여전히 동작하는지. 전부 통과.
+저장소에는 미포함(세션 내 스크래치패드).
+
 ## 8. 호가 시세(RTS TYPE='C') 분석 노트 — ⚠️ 미구현, 추후 확정된 규격으로 교체 예정
 
 **이 섹션은 아직 코드로 구현되지 않았다.** `mas_execution_price.lua`가 TYPE='B'만
 디코드하는 것과 동일하게, TYPE='C'(호가 시세)도 디코드하려면 이 분석을 바탕으로
-새 스트림 핸들러(가칭 `mas_quote.lua`)가 필요하지만, **아래 필드 매핑은 official
-layout 없이 `samples/20260915_0809_RTS.pcapng`만으로 역추적한 것**이라 확정이
-아니다. 추후 확정된 규격 문서가 오면 이 섹션을 그것으로 교체하고 구현에
-들어갈 것.
+새 파일(가칭 `mas_quote.lua`, `mas.by_rts_type["C"]`에 등록 — §6)이 필요하지만,
+**아래 필드 매핑은 official layout 없이 `samples/20260915_0809_RTS.pcapng`만으로
+역추적한 것**이라 확정이 아니다. 추후 확정된 규격 문서가 오면 이 섹션을 그것으로
+교체하고 구현에 들어갈 것.
 
 ### 근거
 
@@ -458,8 +515,9 @@ layout 없이 `samples/20260915_0809_RTS.pcapng`만으로 역추적한 것**이�
 폐하께서 확정된 규격을 주시면, 위 표를 그 내용으로 교체하고
 `mas_execution_price.lua`와 동일한 패턴(사전 테이블 + `decode` 함수 +
 ProtoField 등록 + `add_*` 핸들러, `E.TYPE_EXEC`처럼 `mas_quote.lua`에
-`TYPE_QUOTE = "C"` 상수 추가)으로 `mas_execution_price.lua` 안에 TYPE='C'
-분기를 추가하거나 별도 스트림 모듈을 만들면 된다(§6 파일 구조 참고).
+`TYPE_QUOTE = "C"` 상수 추가)으로 새 파일을 만들고 `mas.by_rts_type["C"] =
+{ add = ..., init = ... }`로 등록하면 된다(§6 파일 구조 참고, `mas_rts.lua`는
+건드릴 필요 없음).
 
 ## 9. 샘플 전체 전문 종류 조사 (2026-09-18)
 
@@ -504,8 +562,9 @@ ProtoField 등록 + `add_*` 핸들러, `E.TYPE_EXEC`처럼 `mas_quote.lua`에
 | 0x20 (Normal) | 102 | 미구현 — AXIS-HEADER만 표시 |
 | 0x50 (RTS) | 7 | 미구현 |
 | **0x90 (UMP/Order Report)** | 6 | 구현됨 |
-| 0x14 | 1 | `O.MSGK_NAMES` 사전에 없는 값. 페이로드가 바이너리라 암호화(ACTF)로
-추정되나 미확인 — "Unspecified Transaction"으로 정상 표시됨(버그 아님) |
+| 0x14 | 1 | `mas.MSGK_NAMES`(`mas_transaction.lua` 소유) 사전에 없는 값. 페이로드가
+바이너리라 암호화(ACTF)로 추정되나 미확인 — "Unspecified Transaction"으로
+정상 표시됨(버그 아님) |
 
 ### 9.4 결론
 

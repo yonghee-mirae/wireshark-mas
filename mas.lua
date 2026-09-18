@@ -7,15 +7,21 @@
 --       SESS  0x01 Transaction, 0x08 RTS(realtime), 0x99 SessionEnd
 --       CHCK  bit 0x20 always, 0x02 compressed(LZO), 0x08 continuation, 0x01 ACK-req, 0x80 error
 --       LENGTH payload length (bytes after the G/W header); NUL padding follows to the next frame
---   Layer 2  depends on SESS (parsed by the stream modules):
---     SESS 0x08 RTS         -> [ RTS-HEADER(6) + RTS-DATA ] repeated   (mas_execution_price.lua)
---     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_order_report.lua)
+--   Layer 2  depends on SESS, dispatched by a thin per-layer module:
+--     SESS 0x08 RTS         -> [ RTS-HEADER(6) + RTS-DATA ] repeated   (mas_rts.lua)
+--     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_transaction.lua)
+--   Layer 3  depends on RTS TYPE / Transaction MSGK, one file per decoded
+--   message type: mas_execution_price.lua (RTS TYPE='B'), mas_order_report.lua
+--   (Transaction MSGK=0x90). A new message type decoder is added the same way:
+--   its own file, registering into mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
 --
--- Multi-file plugin (copy ALL into the plugins dir): mas.lua (this),
--- mas_execution_price.lua, mas_order_report.lua. They coordinate through the
--- shared global `_G.mas`; each stream module registers a handler by SESS value.
--- Only the two supported inner protocols are decoded; everything else (other
--- SESS, compressed, heartbeat, junk) is shown as raw data with the header info.
+-- Multi-file plugin (copy ALL into the plugins dir): mas.lua (this), mas_rts.lua,
+-- mas_transaction.lua, mas_execution_price.lua, mas_order_report.lua. They
+-- coordinate through the shared global `_G.mas`; each layer-2 module registers
+-- itself by SESS value (mas.by_sess), each layer-3 module registers itself by
+-- TYPE/MSGK (mas.by_rts_type / mas.by_msgk). Only the decoded message types are
+-- fully parsed; everything else (other SESS/TYPE/MSGK, compressed, heartbeat,
+-- junk) is shown as raw data with the header info.
 
 local mas = _G.mas or {}
 _G.mas = mas

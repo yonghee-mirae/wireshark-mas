@@ -1,31 +1,21 @@
--- MAS Transaction (G/W SESS=0x01) stream module.
+-- MAS Transaction MSGK=0x90 (UMP, 실시간주문체결통보 / Order Report) decoder.
 --
--- Transaction payload (the G/W frame's LENGTH-bytes body) is:
---   AXIS-HEADER(24) + TR-DATA
---     MSGK(1) ACTF(1) CHKF(1) XWIN(1) YWIN(1) KEYV(2) SVCC(4) TRNM(8) LENGTH(5 ASCII)
--- MSGK selects the transaction kind; of these, only MSGK=0x90 (UMP, 실시간주문
---체결통보 / real-time order report) is decoded here — the only inner protocol
--- this plugin supports besides execution price. TR-DATA for MSGK=0x90 is a
+-- TR-DATA for MSGK=0x90 (see mas_transaction.lua for AXIS-HEADER framing) is a
 -- variable, self-describing EUC-KR code/value stream (code\tvalue\t...), each
--- field identified by a numeric code (see ORDER_FIELDS). Any other MSGK, or an
--- encrypted MSGK=0x90 (ACTF encryption bit set), is shown as raw data with the
--- AXIS-HEADER fields still displayed.
+-- field identified by a numeric code (see ORDER_FIELDS). This is the only
+-- Transaction MSGK this plugin decodes; every other MSGK is left to
+-- mas_transaction.lua's generic "Unspecified Transaction" handling.
 --
 -- Pure helpers (decode_order + dictionary, required by tests) + Wireshark
 -- registration + the MAS/Order Statistics window. Coordinates via _G.mas.
 
 local mas = _G.mas or {}
 _G.mas = mas
-mas.by_sess = mas.by_sess or {}
+mas.by_msgk = mas.by_msgk or {}
 
 local O = {}   -- module table: pure helpers (returned for tests)
 
 O.MSGK_ORDER = 0x90   -- UMP: the only MSGK this module decodes
-O.MSGK_NAMES = {
-  [0x20] = "Normal", [0x50] = "RTS", [0x80] = "Key Exchange", [0x81] = "Cert Key",
-  [0x90] = "UMP (Order Report)", [0x91] = "Dialog Popup", [0x92] = "Error",
-  [0x5f] = "RTS On/Off",
-}
 
 -- Strip trailing NUL bytes (see mas_execution_price for the version note).
 local function rstrip_nul(s)
@@ -97,23 +87,12 @@ end
 if _G.Proto then
   local proto_or = Proto("mas.or", "MAS Order Report")   -- filter: mas.or
 
-  -- AXIS-HEADER fields (common to every SESS=0x01 Transaction frame).
-  local pf_h = {
-    msgk = ProtoField.uint8("mas.or.msgk", "msgk", base.HEX, O.MSGK_NAMES),
-    actf = ProtoField.uint8("mas.or.actf", "actf", base.HEX),
-    encrypted = ProtoField.bool("mas.or.encrypted", "encrypted"),
-    svcc = ProtoField.string("mas.or.svcc", "svcc"),
-    trnm = ProtoField.string("mas.or.trnm", "trnm"),
-    length = ProtoField.uint32("mas.or.length", "length"),
-  }
-
   -- One string field per dictionary code (filter mas.or.<code>, display
   -- "<english name> (<code>)"). Codes are variable per message; an unknown code
-  -- falls back to mas.or.unknown.
-  local pf = { msgk = pf_h.msgk, actf = pf_h.actf, encrypted = pf_h.encrypted,
-               svcc = pf_h.svcc, trnm = pf_h.trnm, length = pf_h.length,
-               unknown = ProtoField.string("mas.or.unknown", "unknown_code") }
-  local fields = { pf.msgk, pf.actf, pf.encrypted, pf.svcc, pf.trnm, pf.length, pf.unknown }
+  -- falls back to mas.or.unknown. AXIS-HEADER fields live in mas_transaction.lua
+  -- (mas.axis.*), shared across every Transaction MSGK decoder.
+  local pf = { unknown = ProtoField.string("mas.or.unknown", "unknown_code") }
+  local fields = { pf.unknown }
   for _, f in ipairs(O.ORDER_FIELDS) do
     local code, name = f[1], f[2]
     pf[code] = ProtoField.string("mas.or." .. code, name .. " (" .. code .. ")")
@@ -121,64 +100,31 @@ if _G.Proto then
   end
   proto_or.fields = fields
 
-  -- Add the AXIS-HEADER fields under `sub` and return (msgk, actf). LENGTH is a
-  -- 5-digit ASCII char array (e.g. "00672"), not a 4-byte binary uint32, so its
-  -- value is parsed from the digit characters and passed explicitly — the
-  -- tvbrange is only for highlighting the underlying bytes in the packet view.
-  local function add_axis_header(sub, tvb, poff)
-    local msgk = tvb(poff, 1):uint()
-    local actf = tvb(poff + 1, 1):uint()
-    sub:add(pf.msgk, tvb(poff, 1))
-    sub:add(pf.actf, tvb(poff + 1, 1))
-    sub:add(pf.encrypted, tvb(poff + 1, 1), mas.hasbit(actf, 0x02))
-    sub:add(pf.svcc, tvb(poff + 7, 4))
-    sub:add(pf.trnm, tvb(poff + 11, 8))
-    local lenv = tonumber(tvb(poff + 19, 5):string()) or 0
-    sub:add(pf.length, tvb(poff + 19, 5), lenv)
-    return msgk, actf
-  end
-
-  -- SESS=0x01 (Transaction) handler. Only MSGK=0x90 (UMP), unencrypted, is
-  -- decoded as an order report; everything else is shown as data with the
-  -- AXIS-HEADER fields still visible. (Info column counts by SESS in mas.lua,
-  -- not per-message here.)
-  local function add_transaction(gw, tvb, poff, plen, payload, pinfo)
-    if plen < 24 then
-      if plen > 0 then gw:add(mas.pf_data, tvb(poff, plen)) end
-      return
-    end
-    -- Peek MSGK/ACTF from the Lua payload string (no tvb read needed) to pick the
-    -- subtree's title AND protocol before adding it: a decodable order report is
-    -- titled "Order Report" and tagged with proto_or (mirrors "Execution Price"
-    -- under RTS), so mas.or stays a "genuine order report here" presence filter.
-    -- Everything else is "Unspecified Transaction", tagged with the umbrella `mas`.
-    local will_decode = payload:byte(1) == O.MSGK_ORDER and not mas.hasbit(payload:byte(2), 0x02)
-    local title = will_decode and "Order Report" or "Unspecified Transaction"
-    local sub = gw:add(will_decode and proto_or or mas.proto, tvb(poff, plen),
-      title .. " (" .. (plen - 24) .. " bytes)")
-    local msgk, actf = add_axis_header(sub, tvb, poff)
+  -- Decode TR-DATA (poff/plen = the whole Transaction payload, AXIS-HEADER
+  -- included, matching what mas_transaction.lua's dispatcher already has) into
+  -- `sub`. Values are EUC-KR, so the body is transcoded to UTF-8 before
+  -- splitting; tab (0x09) never occurs inside a multibyte sequence, so the split
+  -- stays correct. (Requires a Wireshark build with EUC-KR string support.)
+  -- Registered into mas.by_msgk[O.MSGK_ORDER] below; called by
+  -- mas_transaction.lua's generic Transaction dispatcher.
+  local function add_order_body(sub, tvb, poff, plen, pinfo)
     local doff, dlen = poff + 24, plen - 24
-
-    if msgk == O.MSGK_ORDER and not mas.hasbit(actf, 0x02) then
-      -- Values are EUC-KR, so the body is transcoded to UTF-8 before splitting;
-      -- tab (0x09) never occurs inside a multibyte sequence, so the split stays
-      -- correct. (Requires a Wireshark build with EUC-KR string support.)
-      local utf8 = (dlen > 0) and tvb(doff, dlen):string(ENC_EUC_KR) or ""
-      for _, p in ipairs(O.decode_order(utf8)) do
-        local f = pf[p.code]
-        if f then
-          sub:add(f, tvb(poff, plen), p.value)
-        else
-          sub:add(pf.unknown, tvb(poff, plen), p.code .. "=" .. p.value)
-        end
+    local utf8 = (dlen > 0) and tvb(doff, dlen):string(ENC_EUC_KR) or ""
+    for _, p in ipairs(O.decode_order(utf8)) do
+      local f = pf[p.code]
+      if f then
+        sub:add(f, tvb(poff, plen), p.value)
+      else
+        sub:add(pf.unknown, tvb(poff, plen), p.code .. "=" .. p.value)
       end
-      return
     end
-
-    if dlen > 0 then sub:add(mas.pf_data, tvb(doff, dlen)) end
   end
 
-  mas.by_sess[mas.SESS_TRAN] = { add = add_transaction }
+  -- Register as the MSGK=0x90 (UMP) decoder; mas_transaction.lua's generic
+  -- dispatcher calls this for every unencrypted MSGK=0x90 message and falls
+  -- back to "Unspecified Transaction" itself for any other MSGK (or if
+  -- encrypted).
+  mas.by_msgk[O.MSGK_ORDER] = { title = "Order Report", proto = proto_or, add = add_order_body }
 end
 
 if gui_enabled() then
