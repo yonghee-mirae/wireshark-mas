@@ -25,7 +25,7 @@ S.TYPE_BREADTH = "U"   -- the only RTS TYPE this module decodes
 
 -- Field order (0-based index 0..9), for RTS TYPE='U' (Sector Breadth).
 S.FIELD_NAMES = {
-  "issue_code", "sep", "trade_time",
+  "key", "sep", "trade_time",
   "up_count", "upper_limit_count", "flat_count", "down_count", "lower_limit_count",
   "volume", "value",
 }
@@ -39,8 +39,9 @@ end
 
 -- Split a tab-separated TYPE='U' body into a record keyed by FIELD_NAMES.
 -- Returns nil if field count != 10. Trailing NULs are stripped. Unlike
--- TYPE='B'/'C', issue_code here is a market/sector key (e.g. "KQ001",
--- "K0001"), not a stock code, so no market-prefix split is applied.
+-- TYPE='B'/'C', `key` here is a market/sector key (e.g. "KQ001", "K0001"),
+-- not a stock issue code, so no market-prefix split is applied (hence the
+-- field name is `key`, not `issue_code`).
 function S.decode(body)
   local fields = {}
   local start = 1
@@ -72,7 +73,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(S.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.u." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.U." .. name, name)
     end
   end
 
@@ -81,7 +82,7 @@ if _G.Proto then
   mas.proto.fields = fields
 
   local expert_badfields =
-    ProtoExpert.new("mas.rts.u.expert.fields", "Unexpected sector breadth field count",
+    ProtoExpert.new("mas.rts.U.expert.fields", "Unexpected sector breadth field count",
       expert.group.MALFORMED, expert.severity.WARN)
   mas.proto.experts = { expert_badfields }
 

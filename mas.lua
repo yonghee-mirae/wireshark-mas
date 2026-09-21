@@ -12,13 +12,19 @@
 --     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_tr.lua)
 --   Layer 3  depends on RTS TYPE / Transaction MSGK, one file per decoded
 --   message type: mas_rts_b.lua (RTS TYPE='B'), mas_rts_c.lua
---   (RTS TYPE='C'), mas_rts_u.lua (RTS TYPE='U'), mas_tr_90.lua
---   (Transaction MSGK=0x90). A new message type decoder is added the same way:
---   its own file, registering into mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
+--   (RTS TYPE='C'), mas_rts_u.lua (RTS TYPE='U'), mas_rts_v.lua
+--   (RTS TYPE='V'), mas_rts_j.lua (RTS TYPE='J'), mas_rts_x.lua
+--   (RTS TYPE='X'), mas_rts_f.lua (RTS TYPE='F'), mas_rts_y.lua
+--   (RTS TYPE='Y'), mas_rts_z.lua (RTS TYPE='Z'), mas_rts_lm.lua
+--   (RTS TYPE='m', lowercase — "lm" avoids colliding with a future
+--   TYPE='M'), mas_tr_90.lua (Transaction MSGK=0x90). A new message type
+--   decoder is added the same way: its own file, registering into
+--   mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
 --
 -- Multi-file plugin (copy ALL into the plugins dir): mas.lua (this), mas_rts.lua,
 -- mas_tr.lua, mas_rts_b.lua, mas_rts_c.lua,
--- mas_rts_u.lua, mas_tr_90.lua. They coordinate through the
+-- mas_rts_u.lua, mas_rts_v.lua, mas_rts_j.lua, mas_rts_x.lua, mas_rts_f.lua,
+-- mas_rts_y.lua, mas_rts_z.lua, mas_rts_lm.lua, mas_tr_90.lua. They coordinate through the
 -- shared global `_G.mas`; each layer-2 module registers itself by SESS value
 -- (mas.by_sess), each layer-3 module registers itself by TYPE/MSGK
 -- (mas.by_rts_type / mas.by_msgk). Only the decoded message types are fully

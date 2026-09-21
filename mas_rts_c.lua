@@ -111,24 +111,24 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(Q.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.c." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.C." .. name, name)
     end
   end
-  pf.market = ProtoField.string("mas.rts.c.market", "market")
+  pf.market = ProtoField.string("mas.rts.C.market", "market")
 
   local fields = {}
   for _, f in pairs(pf) do fields[#fields + 1] = f end
   mas.proto.fields = fields
 
   local expert_badfields =
-    ProtoExpert.new("mas.rts.c.expert.fields", "Unexpected quote field count",
+    ProtoExpert.new("mas.rts.C.expert.fields", "Unexpected quote field count",
       expert.group.MALFORMED, expert.severity.WARN)
   mas.proto.experts = { expert_badfields }
 
   -- Decode a TYPE='C' quote record body into the tree. The subtree is always
   -- tagged with the umbrella `mas` proto (see PROTOCOL.md §4.7) — a malformed
   -- TYPE='C' body (wrong field count) is flagged via expert_badfields instead;
-  -- "did this decode?" is a field-value question (e.g. bare `mas.rts.c.market`),
+  -- "did this decode?" is a field-value question (e.g. bare `mas.rts.C.market`),
   -- not a presence-filter one (mirrors add_exec in mas_rts_b.lua).
   local function add_quote(tree, tvb, poff, r, pinfo, msg_index)
     local rec = Q.decode(r.body)
@@ -140,10 +140,10 @@ if _G.Proto then
       return false
     end
     local base = poff + r.off + 6   -- body start within tvb
+    sub:add(pf.market, tvb(base, r.len), rec.market)   -- shown right after length, before issue_code
     for _, name in ipairs(Q.FIELD_NAMES) do
       if pf[name] then sub:add(pf[name], tvb(base, r.len), rec[name]) end
     end
-    sub:add(pf.market, tvb(base, r.len), rec.market)
     return true
   end
 

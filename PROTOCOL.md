@@ -116,14 +116,14 @@ static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
 ### Wireshark 매핑
 
 - Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
-- 필드: `mas.rts.b.<field>` (39필드 중 `sep` 제외), `mas.rts.b.market`,
-  `mas.rts.b.acc_volume_num`, `mas.rts.b.price_num`, `mas.rts.b.trade_volume_num`,
-  `mas.rts.b.reversed`. RTS-HEADER 공용 필드는 `mas.rts.kind`/`mas.rts.type`/
+- 필드: `mas.rts.B.<field>` (39필드 중 `sep` 제외), `mas.rts.B.market`,
+  `mas.rts.B.acc_volume_num`, `mas.rts.B.price_num`, `mas.rts.B.trade_volume_num`,
+  `mas.rts.B.reversed`. RTS-HEADER 공용 필드는 `mas.rts.kind`/`mas.rts.type`/
   `mas.rts.reclen`(`mas_rts.lua` 소유, 모든 RTS TYPE 레코드에 공통 적용).
 - Info 라벨: 별도 라벨 없음 — RTS(SESS=0x08) 프레임은 TYPE·디코드 성공 여부와
   무관하게 Info 컬럼에 `RTS`로만 집계된다(§4.6 참고). "체결이 실제로
   디코드됐는가"는 상세창 라벨(`type: B`, 성공/실패 무관 동일 — §4.9)로는
-  구분되지 않고, 디코드 성공 시에만 채워지는 `mas.rts.b.market` 등 필드값
+  구분되지 않고, 디코드 성공 시에만 채워지는 `mas.rts.B.market` 등 필드값
   (§4.7)으로만 구분한다.
 - Statistics 창: **MAS/Execution Prices** — Market/Issue/Time/Price/TrdVol/AccVol/Reversed
   컬럼, 5-tuple(Flow) 별 구분.
@@ -138,15 +138,15 @@ RTS-HEADER 프레이밍은 §3과 동일(`mas_rts.lua`가 담당). TYPE='C'(호�
   `Q.decode(body)`(39필드 체결의 `E.decode`와 동일 패턴 — 필드 개수가
   128이 아니면 `nil`), `Q.split_market`(체결과 동일한 이슈코드 접두어 규칙).
 - Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
-- 필드: `mas.rts.c.<field>` (128필드 중 `sep` 제외), `mas.rts.c.market`.
+- 필드: `mas.rts.C.<field>` (128필드 중 `sep` 제외), `mas.rts.C.market`.
 - `mas.by_rts_type["C"]`에 등록 — TYPE='B'와 마찬가지로 **디코드 성공 여부에
-  따라 필드를 채울지 결정**한다(실패 시 expert info만 붙고 `mas.rts.c.*` 필드는
+  따라 필드를 채울지 결정**한다(실패 시 expert info만 붙고 `mas.rts.C.*` 필드는
   전혀 추가되지 않음. §4.7 원칙과 동일). 누적 상태(reversal 같은) 없이 매 레코드
   독립적으로 디코드하므로 `init` 훅은 등록하지 않는다.
 - Info 라벨: 별도 라벨 없음 — TYPE='B'와 마찬가지로 RTS(SESS=0x08) 프레임은
   Info 컬럼에 `RTS`로만 집계된다(§4.6). 상세창 라벨(`type: C`, 성공/실패
   무관 동일 — §4.9)로는 구분되지 않고, 디코드 성공 시에만 채워지는
-  `mas.rts.c.market` 등 필드값으로만 디코드 성공 여부를 구분한다.
+  `mas.rts.C.market` 등 필드값으로만 디코드 성공 여부를 구분한다.
 - Statistics 창: 없음(요청 범위 밖 — 필요해지면 `mas_rts_b.lua`의
   `MAS/Execution Prices` 창과 동일한 패턴으로 추가 가능).
 
@@ -154,17 +154,18 @@ RTS-HEADER 프레이밍은 §3과 동일(`mas_rts.lua`가 담당). TYPE='C'(호�
 
 RTS-HEADER 프레이밍은 §3과 동일. TYPE='U'(업종:등락)는 개별 종목이 아니라
 **시장/업종 전체의 등락 집계**(코스피·코스닥 등)로, 바디는 **10 tab-분리
-필드**: `issue_code, sep, trade_time, up_count, upper_limit_count,
+필드**: `key, sep, trade_time, up_count, upper_limit_count,
 flat_count, down_count, lower_limit_count, volume, value`.
 
 - 구현 파일: `mas_rts_u.lua`. `S.FIELD_NAMES`(10개), `S.decode(body)`
   (필드 개수가 10이 아니면 `nil`, TYPE='B'/'C'의 `decode`와 동일 패턴).
-  `issue_code`는 종목코드가 아니라 시장/업종 키(예: `KQ001`, `K0001`)라
-  `E.split_market` 같은 접두어 분해는 적용하지 않는다.
+  첫 필드명이 `issue_code`가 아니라 `key`인 이유: 종목코드가 아니라
+  시장/업종 키(예: `KQ001`, `K0001`)라 `E.split_market` 같은 접두어 분해도
+  적용하지 않는다 — 스펙 문서도 이 컬럼을 `key`로 부른다.
 - Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
-- 필드: `mas.rts.u.<field>` (10필드 중 `sep` 제외).
+- 필드: `mas.rts.U.<field>` (10필드 중 `sep` 제외).
 - `mas.by_rts_type["U"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
-  (실패 시 expert info만 붙고 `mas.rts.u.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  (실패 시 expert info만 붙고 `mas.rts.U.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
   동일).
 - 검증: `up_count + upper_limit_count + flat_count + down_count +
   lower_limit_count`가 `K0001` 표본(6건) 전부 정확히 **801**, `KQ001`
@@ -174,6 +175,207 @@ flat_count, down_count, lower_limit_count, volume, value`.
   아님.
 - Info 라벨: 별도 라벨 없음, TYPE='B'/'C'와 동일하게 Info 컬럼엔 `RTS`로만
   집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.7. Layer 2/3 — RTS (SESS=0x08), TYPE='V': `mas_rts_v.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='V'(해외:지수)는 CME/COMEX 선물이나
+원/달러 환율 같은 **해외 지수·상품·환율**로, 바디는 **11 tab-분리 필드**:
+`key, sep, trade_time, price, change, change_rate, volume, open_price,
+high_price, low_price, date` (스펙: `inner/wireshark 추가.txt`).
+
+- 구현 파일: `mas_rts_v.lua`. `V.FIELD_NAMES`(11개), `V.decode(body)`
+  (필드 개수가 11이 아니면 `nil`, TYPE='B'/'C'/'U'의 `decode`와 동일 패턴).
+  `key`는 `"CME@NQ"`/`"USDKRWSMBS"`처럼 `@` 구분 심볼이라(KRX 종목코드의
+  `.` 접두어 규칙과 다름) `E.split_market` 같은 접두어 분해는 적용하지
+  않는다(§3.6의 `key`와 같은 이유).
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.V.<field>` (11필드 중 `sep` 제외).
+- `mas.by_rts_type["V"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.V.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- 검증: `samples/20260921_nana.pcapng`에서 실측 100건 전부 정확히 11개
+  tab-구분 필드로 쪼개짐을 확인(파이썬으로 `mas.scan`/`split_records` 재현,
+  저장소 미포함).
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.8. Layer 2/3 — RTS (SESS=0x08), TYPE='J': `mas_rts_j.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='J'(업종:시세/지수)는 KOSPI/KOSDAQ 등
+**업종 지수 자체의 시세**로, 바디는 **13 tab-분리 필드**: `key, sep,
+trade_time, index, change, change_rate, trade_volume, acc_volume, acc_value,
+open_price, high_price, low_price, market_status` (스펙:
+`inner/wireshark 추가.txt`).
+
+- 구현 파일: `mas_rts_j.lua`. `J.FIELD_NAMES`(13개), `J.decode(body)`
+  (필드 개수가 13이 아니면 `nil`, TYPE='B'/'C'/'U'/'V'의 `decode`와 동일
+  패턴). `key`는 §3.6/§3.7과 같은 이유로 종목코드가 아니라 업종 코드(예:
+  `K2001`)라 접두어 분해를 적용하지 않는다. `trade_volume`(체결량)/
+  `acc_volume`(거래량)/`acc_value`(거래대금) 필드명은 §3의 체결 필드
+  네이밍을 그대로 재사용했다(같은 "틱당 vs. 누적" 구분).
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.J.<field>` (13필드 중 `sep` 제외).
+- `mas.by_rts_type["J"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.J.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- 검증: `samples/20260921_nana.pcapng`에서 실측 42건 전부 정확히 13개
+  tab-구분 필드로 쪼개짐을 확인(파이썬으로 `mas.scan`/`split_records` 재현,
+  저장소 미포함).
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.9. Layer 2/3 — RTS (SESS=0x08), TYPE='X': `mas_rts_x.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='X'(업종:예상지수)는 §3.8의 TYPE='J'와
+같은 업종 지수지만 **"예상"(장 시작 전 등 추정치) 값**으로, 바디는
+**10 tab-분리 필드**: `key, sep, trade_time, index, change, change_rate,
+trade_volume, acc_volume, acc_value, market_status` (스펙:
+`inner/wireshark 추가.txt`) — TYPE='J'와 거의 같은 구조지만
+open/high/low_price 3개가 없다(추정치라 그 개념이 없는 것으로 보임).
+
+- 구현 파일: `mas_rts_x.lua`. `X.FIELD_NAMES`(10개), `X.decode(body)`
+  (필드 개수가 10이 아니면 `nil`, TYPE='B'/'C'/'U'/'V'/'J'의 `decode`와 동일
+  패턴). `key`/`trade_volume`/`acc_volume`/`acc_value` 네이밍은 §3.8(TYPE='J')과
+  동일한 이유로 그대로 재사용했다.
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.X.<field>` (10필드 중 `sep` 제외).
+- `mas.by_rts_type["X"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.X.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- **검증(주의)**: §3.7/§3.8과 달리 **실캡처 샘플에서 TYPE='X'가 관측된 적이
+  없다**(§9.2/§9.5 어느 샘플에도 없음). 스펙 문서 자체의 예시 행(`X0001 X
+  085512 -6614.54 -69.83 -1.04 630843 630843 6089856 0`, 10필드)만으로
+  Wireshark Lua 스텁 디코드를 확인했다 — 필드 이름/의미는 실측으로 검증되지
+  않았으니 실캡처가 확보되면 재검증할 것.
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.10. Layer 2/3 — RTS (SESS=0x08), TYPE='F': `mas_rts_f.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='F'(주식:거래원)는 종목별 **매도/매수
+상위 5개 거래원(증권사) 랭킹**으로, 바디는 **78 tab-분리 필드**: 매도
+거래원명/수량/금액/비중 5단×4그룹 + 매수 거래원명/수량/금액/비중 5단×4그룹 +
+외국인 매수/매도/순매수 수량·금액 6개 + 매도/매수 거래원코드 5단×2그룹 +
+순매도%(코드 231~235)/순매수%(코드 236~240) 5단×2 + 매도/매수 증감 5단×2
+(스펙: `inner/wireshark 추가.txt`).
+
+- 구현 파일: `mas_rts_f.lua`. `F.FIELD_NAMES`(78개), `F.decode(body)`
+  (필드 개수가 78이 아니면 `nil`, TYPE='B'/'C'의 `decode`와 동일 패턴).
+  `issue_code`는 `"M.A005930"`처럼 §3/§3.5와 같은 마켓 접두어 규칙이라
+  `split_market`을 그대로 적용한다(§3.6~§3.9의 `key`와 달리 진짜 종목코드).
+- **스펙 오류 정정(2026-09-21)**: 원래 받은 스펙 문서는 코드 231~235와
+  236~240을 똑같이 `순매수%1~5`로 표기했으나, **231~235는 실제로
+  `순매도%1~5`(net SELL %)**다 — 236~240만 `순매수%1~5`(net BUY %)가
+  맞다. 매수/매도로 이미 구분되니 코드 번호 접미어는 더 필요 없어,
+  `net_sell_pct1`~`net_sell_pct5`/`net_buy_pct1`~`net_buy_pct5`처럼
+  나머지 필드(`sell_broker1..5` 등)와 동일하게 `ladder()` 헬퍼로 생성했다
+  (처음엔 스펙을 그대로 믿고 이름도 못 지어 코드 번호(`net_buy_pct_231`
+  등)로만 구분했던 걸 바로잡음).
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.F.<field>` (78필드 중 `sep` 제외) + `mas.rts.F.market`.
+- `mas.by_rts_type["F"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.F.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- **검증(주의)**: `samples/20260921_nana.pcapng`에서 실측 **2건뿐**이지만
+  둘 다 정확히 78개 tab-구분 필드로 쪼개짐을 확인(파이썬으로
+  `mas.scan`/`split_records` 재현, 저장소 미포함) — 샘플 수가 적어 §3.7/§3.8
+  (100건/42건)보다 신뢰도가 낮다. `net_sell_pct1..5`/`net_buy_pct1..5` 두
+  그룹의 의미(순매도%/순매수%)는 사용자 확인으로 정정됨 — 위 스펙 오류
+  정정 참고.
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.11. Layer 2/3 — RTS (SESS=0x08), TYPE='Y': `mas_rts_y.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='Y'(투자자QTY)는 **16개 투자자
+구분별 매도/매수/순매수 수량**으로, 바디는 **51 tab-분리 필드**: `key, sep,
+trade_time` + 16개 구분×3(매도QTY/매수QTY/순매수Q) (스펙:
+`inner/wireshark 추가.txt`).
+
+- 구현 파일: `mas_rts_y.lua`. `Y.FIELD_NAMES`(51개), `Y.decode(body)`
+  (필드 개수가 51이 아니면 `nil`, TYPE='B'/'C'/'F'의 `decode`와 동일 패턴).
+  `key`는 §3.6/§3.7~§3.9와 같은 이유로 시장 키(예: `"0500000000"`)라
+  접두어 분해를 적용하지 않는다.
+- **네이밍 주의**: 스펙의 16개 투자자 구분 코드(`101,102,...,110,130,131,
+  160,170,171,190` — 매수는 +100, 순매수는 +200)에 구분 이름이 전혀 없어서
+  (예: 어느 게 "개인"/"외국인"/"기관"인지 불명) §3.10(F)과 동일한 이유로
+  의미를 추측하지 않고 **스펙 코드 번호 그대로**(`sell_qty_101`,
+  `buy_qty_201`, `net_buy_qty_301`, ...) 필드명을 지었다.
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.Y.<field>` (51필드 중 `sep` 제외).
+- `mas.by_rts_type["Y"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.Y.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- 검증: `samples/20260921_nana.pcapng`(33건) + `samples/20260915_0809_RTS2.pcapng`
+  (52건) 양쪽 모두 정확히 51개 tab-구분 필드로 쪼개짐을 확인(파이썬으로
+  `mas.scan`/`split_records` 재현, 저장소 미포함).
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.12. Layer 2/3 — RTS (SESS=0x08), TYPE='Z': `mas_rts_z.lua`
+
+RTS-HEADER 프레이밍은 §3.11(TYPE='Y')과 완전히 같은 구조지만 **수량 대신
+금액**이다 — 바디는 **51 tab-분리 필드**: `key, sep, trade_time` + 16개
+구분×3(매도AMT/매수AMT/순매수A) (스펙: `inner/wireshark 추가.txt`).
+스펙 코드가 TYPE='Y'의 코드 + 400(예: Y의 `101` → Z의 `501`)이라 **같은
+16개 투자자 구분을 가리키는 게 거의 확실**하다(단, 필드명은 각 타입 자기
+코드를 그대로 쓴다 — §3.10/§3.11과 동일한 이유).
+
+- 구현 파일: `mas_rts_z.lua`. `Z.FIELD_NAMES`(51개), `Z.decode(body)`
+  (필드 개수가 51이 아니면 `nil`, §3.11의 `Y.decode`와 동일 패턴). `key`도
+  §3.11과 동일하게 접두어 분해를 적용하지 않는다.
+- **네이밍**: `sell_amt_501`, `buy_amt_601`, `net_buy_amt_701`, ... 처럼
+  §3.11과 동일한 이유로 스펙 코드 번호(`501,502,...,510,530,531,560,570,
+  571,590`)를 그대로 필드명에 썼다.
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.Z.<field>` (51필드 중 `sep` 제외).
+- `mas.by_rts_type["Z"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.Z.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- 검증: §3.11과 동일한 두 샘플에서 정확히 51개 tab-구분 필드로 쪼개짐을 확인.
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
+- Statistics 창: 없음(요청 범위 밖).
+
+## 3.13. Layer 2/3 — RTS (SESS=0x08), TYPE='m'(소문자): `mas_rts_lm.lua`
+
+RTS-HEADER 프레이밍은 §3과 동일. TYPE='m'(소문자, 시황제목/통합뉴스)은
+**뉴스 헤드라인 + 관련 종목 정보 + 제공처 메타데이터**로, 바디는
+**16 tab-분리 필드**: `key, sep, content, issue_code, issue_name, key1,
+key2, time, category, category2, provider, date, price, volume,
+change_sign, key3` (스펙: `inner/wireshark 추가.txt`).
+
+- **파일명 주의(파일명에만 적용, 필터에는 해당 없음)**: 이 TYPE은 이미
+  소문자 `m`이다. 파일명 규칙은 TYPE 글자를 소문자로 바꿔 붙이는 것인데
+  (예: TYPE='B' → `mas_rts_b.lua`), 그대로 `mas_rts_m.lua`로 지으면 나중에
+  대문자 TYPE='M'이 나타났을 때 파일명이 겹친다. 그래서 이 소문자 TYPE
+  파일만 `mas_rts_lm.lua`("lower m")로 짓고, `mas_rts_m.lua`는 미래의
+  대문자 TYPE='M'을 위해 비워 둔다. 소문자 `c`/`y`를 나중에 구현하게 되면
+  같은 이유로 `mas_rts_lc.lua`/`mas_rts_ly.lua`로 지을 것.
+  **등록 키(`mas.by_rts_type["m"]`), 라벨(`"type: m"`), Wireshark 필터
+  (`mas.rts.m.*`) 전부 실제 와이어 바이트 그대로 소문자 `m`이며 파일명과
+  무관하다** — Wireshark 표시 필터의 필드명은 대소문자를 구분하므로(WSUG
+  공식 문서 확인, §4.7 참고) `mas.rts.m`과 미래의 `mas.rts.M`은 이름
+  트릭 없이도 이미 서로 다른 필터라 필터 레벨에서는 "l" 접두어가 필요 없다.
+- 구현 파일: `mas_rts_lm.lua`. `LM.FIELD_NAMES`(16개), `LM.decode(body)`
+  (필드 개수가 16이 아니면 `nil`).
+- **필드명 주의**: `category`/`category2`가 실측에서 "한차"/"한경차이나",
+  "아경"/"아시아경제"처럼 **뉴스 제공처의 약칭/전체명**으로 보이는 값을
+  담고 있어("분류"라는 스펙 라벨의 문자 그대로 의미와는 달라 보임) 확실한
+  의미를 확정하지 못했다 — 필드명은 스펙의 한글 라벨을 그대로 직역한
+  것이고, 의미를 임의로 추측해 재작명하지 않았다.
+- **EUC-KR 처리**: `content`(헤드라인)/`issue_name`/`category`/`category2`가
+  EUC-KR이라, `mas_tr_90.lua`(주문결과)·`mas_rts_f.lua`(거래원)와 동일하게
+  바디 전체를 EUC-KR→UTF-8로 변환한 뒤 tab-분리한다(탭 0x09는 멀티바이트
+  시퀀스 안에 나타나지 않아 분리 결과가 그대로 맞다).
+- Proto: 없음 — `mas`(우산 proto) 하나뿐, 서브트리는 성공/실패 무관 항상 `mas`로 태그(§4.7).
+- 필드: `mas.rts.m.<field>` (16필드 중 `sep` 제외).
+- `mas.by_rts_type["m"]`에 등록 — 디코드 성공 여부에 따라 필드를 채울지 결정
+  (실패 시 expert info만 붙고 `mas.rts.m.*` 필드는 전혀 추가되지 않음. §4.7 원칙과
+  동일).
+- 검증: `samples/20260921_nana.pcapng`(19건) + `samples/20260915_0809_RTS2.pcapng`
+  (4건) 양쪽 모두 정확히 16개 tab-구분 필드로 쪼개짐을 확인.
+- Info 라벨: 별도 라벨 없음, Info 컬럼엔 `RTS`로만 집계(§4.6).
 - Statistics 창: 없음(요청 범위 밖).
 
 ## 4. Layer 2/3 — Transaction (SESS=0x01): `mas_tr.lua`(프레이밍) + `mas_tr_90.lua`(MSGK=0x90 디코드)
@@ -262,7 +464,7 @@ MSGK(1) ACTF(1) CHKF(1) XWIN(1) YWIN(1) KEYV(2) SVCC(4) TRNM(8) LENGTH(5, ASCII)
   - 39개 체결 필드(`price`, `acc_volume` 등)와 주문 코드 필드(`mas.tr.90.<code>`)
     자체는 `ProtoField.string`으로 등록되어 있어 원본 문자 그대로("+206000",
     "0000037389" 등) 표시된다 — 이미 char[] 그대로 맞는 처리다. 여기서 파생된
-    `mas.rts.b.acc_volume_num` 등 정수 필드만 위와 같은 명시적 파싱 규칙을 따른다.
+    `mas.rts.B.acc_volume_num` 등 정수 필드만 위와 같은 명시적 파싱 규칙을 따른다.
 - **진짜 1바이트 이진값(enum/플래그)**: `CTRL`, `SESS`, `CHCK`, `MSGK`,
   `ACTF` 등은 실캡처로 검증한 결과 `0x01`, `0x08`, `0x20`, `0x90` 같은
   **진짜 낮은 값의 raw 바이트**이지 ASCII 숫자 문자('0','1',...)가 아니다.
@@ -288,7 +490,7 @@ tvbrange를 그대로 넘기고 있었다(같은 파일의 다른 두 LENGTH 필
   TYPE/MSGK 고유 필드가 하나도 채워지지 않는 프레임도 Info에서는 그대로
   `RTS`/`Transaction`에 집계된다 — Info는 "이 프레임이 어떤 종류의 MAS
   트래픽인가"만 보여주고, "내용을 이해했는가"는 상세창의 몫이다. §4.7/§4.9에서
-  다루는 "디코드 성공 여부"(`mas.rts.b.market` 등 필드값으로 판정, 라벨은
+  다루는 "디코드 성공 여부"(`mas.rts.B.market` 등 필드값으로 판정, 라벨은
   성공/실패 무관 동일)와는 성격이 다르니 혼동하지 말 것.
 - **`n`/`m`은 "G/W 프레임 개수"가 아니라 "그 안에 실제로 담긴 메시지 개수"다.**
   RTS(SESS=0x08)의 payload는 `RTS-HEADER(6)+RTS-DATA`가 **반복**되는 구조라
@@ -334,13 +536,13 @@ tvbrange를 그대로 넘기고 있었다(같은 파일의 다른 두 LENGTH 필
 
 ## 4.7. 존재(bare) 필터는 전부 폐기 — 모든 서브트리는 언제나 우산 `mas`로만 태그, 세부 필터는 필드값으로
 
-**과거 발견된 버그**: Wireshark에서 `mas.rts.b`(체결 시세)나 `mas.tr.90`(주문 체결
+**과거 발견된 버그**: Wireshark에서 `mas.rts.B`(체결 시세)나 `mas.tr.90`(주문 체결
 통보) 같은 바깥(bare) 프로토콜 필터는 "이 프레임에 해당 프로토콜의
 `tree:add(proto_x, ...)` 트리 항목이 있는가"로 판정된다. 그런데 "Unspecified
 RTS" 서브트리(TYPE≠'B')와 "Unspecified Transaction" 서브트리(MSGK≠0x90/암호화)가
-**전부 `proto_ex`/`proto_or`(즉 `mas.rts.b`/`mas.tr.90`)로 태그되어 있었다** — 라벨
+**전부 `proto_ex`/`proto_or`(즉 `mas.rts.B`/`mas.tr.90`)로 태그되어 있었다** — 라벨
 문자열만 "Unspecified ..."로 바꿨을 뿐, 서브트리를 만드는 `tree:add()`의
-첫 인자(proto)는 그대로 둔 채였다. 결과적으로 `mas.rts.b` 필터는 "체결
+첫 인자(proto)는 그대로 둔 채였다. 결과적으로 `mas.rts.B` 필터는 "체결
 레코드가 있는 프레임"이 아니라 **"RTS(SESS=0x08) 프레임이면 전부"**,
 `mas.tr.90`는 **"Transaction(SESS=0x01) 프레임이면 전부"** 매칭해 사실상
 `mas.sess==0x08`/`mas.sess==0x01`과 다를 바 없어져 있었다.
@@ -358,9 +560,9 @@ payload가 0바이트이거나 RTS-HEADER 자체가 깨진 프레임에는 매�
 
 **최종 수정**: TYPE/MSGK, 디코드 성공/실패와 무관하게 **모든 서브트리는
 언제나 우산 proto(`mas.proto`)로만 태그**하고, 한 걸음 더 나가 **이 플러그인
-전체에서 등록되는 Proto가 `mas` 단 하나뿐**이도록 만들었다 — `mas.rts.b`/
-`mas.rts.c`/`mas.rts.u`/`mas.tr.90`/`mas.rts`/`mas.tr` 같은 파일별 Proto
-객체를 전부 없애고, 7개 파일 모두 다음 패턴을 쓴다:
+전체에서 등록되는 Proto가 `mas` 단 하나뿐**이도록 만들었다 — `mas.rts.B`/
+`mas.rts.C`/`mas.rts.U`/`mas.tr.90`/`mas.rts`/`mas.tr` 같은 파일별 Proto
+객체를 전부 없애고, 파일마다(새 TYPE/MSGK 디코더 파일 포함) 다음 패턴을 쓴다:
 
 ```lua
 mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
@@ -377,7 +579,7 @@ mas.proto.experts = { <이 파일이 정의하는 ProtoExpert들> }   -- 있는 
 `mas.proto = mas.proto or Proto(...)` 가드 덕분에 **어느 파일이 먼저
 로드되어 `mas.proto`를 실제로 만들든 상관없다** — §6의 "로드 순서 독립적"
 원칙과 동일하게 유지된다. 그 결과 Wireshark의 Enabled-Protocols 목록/필터
-자동완성에 이 플러그인이 노출하는 프로토콜은 `mas` 하나뿐이고, `mas.rts.b`
+자동완성에 이 플러그인이 노출하는 프로토콜은 `mas` 하나뿐이고, `mas.rts.B`
 같은 이름은 필터 자동완성에도 더 이상 나타나지 않는다 — bare 필터로
 매칭되는 패킷이 원천적으로 없을 뿐 아니라, 그런 이름 자체가 존재하지 않는다.
 
@@ -390,7 +592,7 @@ mas.proto.experts = { <이 파일이 정의하는 ProtoExpert들> }   -- 있는 
 - TYPE/MSGK로 거르기: `mas.rts.type == "B"`, `mas.tr.msgk == 0x90` (공용 헤더
   필드라 디코드 성공 여부와 무관하게 항상 채워짐).
 - "실제로 디코드까지 성공했는가": 디코드 성공 시에만 채워지는 그 TYPE/MSGK
-  고유 필드를 bare로 쓴다 — 예: `mas.rts.b.market`(체결/호가는 성공 시 항상
+  고유 필드를 bare로 쓴다 — 예: `mas.rts.B.market`(체결/호가는 성공 시 항상
   채워짐), `mas.tr.90.950`(주문 결과는 코드가 메시지마다 달라 완벽한 대응
   필드는 없지만 실무적으로 충분). 리프 필드는 정확히 그 필드를 추가한
   코드 경로에서만 존재해 프로토 태깅과 같은 모호함이 생기지 않는다.
@@ -402,7 +604,7 @@ mas.proto.experts = { <이 파일이 정의하는 ProtoExpert들> }   -- 있는 
 
 `mas.open_stream_window`를 호출하는 두 Statistics 창(§3 MAS/Execution Prices,
 §4 MAS/UMP)의 tap 필터도 이 원칙에 맞춰 값 필터로 바꿨다 — `mas_rts_b.lua`는
-`mas.rts.b.market`, `mas_tr_90.lua`는 `mas.tr.msgk == 0x90 && !mas.tr.encrypted`.
+`mas.rts.B.market`, `mas_tr_90.lua`는 `mas.tr.msgk == 0x90 && !mas.tr.encrypted`.
 
 **새로운 "Unspecified" 계열 표시를 추가할 때는 항상 이 패턴을 따를 것: 서브트리는
 무조건 `mas.proto`로 태그하고, 디코드 성공 표시는 라벨 문자열 + (필요하면) 성공
@@ -462,7 +664,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 
 **따라서 "Unspecified RTS"/"Unspecified Transaction" 문자열은 코드 어디에도
 없다.** 디코드 성공 여부는 이제 오직 그 서브트리 밑에 TYPE/MSGK 고유 필드가
-실제로 채워져 있는지(예: `mas.rts.b.market`, `mas.tr.90.950`)로만 구분한다 —
+실제로 채워져 있는지(예: `mas.rts.B.market`, `mas.tr.90.950`)로만 구분한다 —
 라벨만 보고는 "이 레코드가 해석됐는지" 알 수 없고, 반드시 필드를 확인해야
 한다. 새 TYPE/MSGK 디코더를 추가해도 이 라벨은 `mas_rts.lua`/`mas_tr.lua`가
 이미 만들어 주므로 3계층 파일은 라벨을 신경 쓸 필요가 없다.
@@ -473,7 +675,8 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 |---|---|---|
 | RTS 압축 | CHCK bit `0x02` | LZO 압축, 라이브러리/구현 없음 → `mas.data` |
 | Transaction 암호화 | ACTF bit `0x02` | Xecure/XecureMobile 구간암호화, 키 없음 → `mas.data` |
-| RTS TYPE ≠ 'B'/'C'/'U' | D/Y/Z/c/m/y/V/F 등 | 레이아웃 미상, 요청 범위 밖 → KIND/TYPE/LENGTH만 표시 + `mas.data` |
+| RTS TYPE ≠ 'B'/'C'/'U'/'V'/'J'/'X'/'F'/'Y'/'Z'/'m' | `D`(80필드 추정)/소문자 `c`/소문자 `y`/`?`(0x3F, 신규 발견) | 레이아웃 미상(스펙 없음) → KIND/TYPE/LENGTH만 표시 + `mas.data` |
+| RTS 압축 프레임 안의 TYPE | — | 압축 해제 자체가 안 되니 내부 TYPE을 전혀 알 수 없음 |
 | Transaction MSGK ≠ 0x90 | Normal/RTS-on-off/Dialog/Error/키교환 등 | 요청 범위 밖(주문체결·체결시세만 지원) → AXIS-HEADER만 표시 + `mas.data` |
 | POLL | CTRL=`0x04` | 데이터 없음, 상세창·Info 모두 `POLL` |
 
@@ -504,9 +707,16 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | `mas.lua` | 1 (G/W) | G/W 헤더 프레이밍(`mas.scan`), 우산 proto(`mas`) + dissector, TCP 재조립, Info 컬럼 소유, 공용 Statistics 창(`mas.open_stream_window`) |
 | `mas_rts.lua` | 2 (RTS) | SESS=0x08 등록, RTS-HEADER 파싱(`split_records`), 공용 헤더 필드(`mas.rts.*`), TYPE별 디스패치(`mas.by_rts_type`), 미등록 TYPE도 `"type: <TYPE>"` 라벨로 표시(§4.9) |
 | `mas_tr.lua` | 2 (Transaction) | SESS=0x01 등록, AXIS-HEADER 파싱, 공용 헤더 필드(`mas.tr.*`), MSGK별 디스패치(`mas.by_msgk`), 미등록/암호화 MSGK도 `"msgk: <name> (0x<hex>)"` 라벨로 표시(§4.9) |
-| `mas_rts_b.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.rts.b.*` 필드, MAS/Execution Prices 창. `mas.by_rts_type["B"]`에 등록 |
-| `mas_rts_c.lua` | 3 (RTS TYPE='C') | 호가 시세 디코드, `mas.rts.c.*` 필드. `mas.by_rts_type["C"]`에 등록 (§3.5) |
-| `mas_rts_u.lua` | 3 (RTS TYPE='U') | 업종:등락 디코드, `mas.rts.u.*` 필드. `mas.by_rts_type["U"]`에 등록 (§3.6) |
+| `mas_rts_b.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.rts.B.*` 필드, MAS/Execution Prices 창. `mas.by_rts_type["B"]`에 등록 |
+| `mas_rts_c.lua` | 3 (RTS TYPE='C') | 호가 시세 디코드, `mas.rts.C.*` 필드. `mas.by_rts_type["C"]`에 등록 (§3.5) |
+| `mas_rts_u.lua` | 3 (RTS TYPE='U') | 업종:등락 디코드, `mas.rts.U.*` 필드. `mas.by_rts_type["U"]`에 등록 (§3.6) |
+| `mas_rts_v.lua` | 3 (RTS TYPE='V') | 해외:지수 디코드, `mas.rts.V.*` 필드. `mas.by_rts_type["V"]`에 등록 (§3.7) |
+| `mas_rts_j.lua` | 3 (RTS TYPE='J') | 업종:시세(지수) 디코드, `mas.rts.J.*` 필드. `mas.by_rts_type["J"]`에 등록 (§3.8) |
+| `mas_rts_x.lua` | 3 (RTS TYPE='X') | 업종:예상지수 디코드(실캡처 미검증, §3.9), `mas.rts.X.*` 필드. `mas.by_rts_type["X"]`에 등록 |
+| `mas_rts_f.lua` | 3 (RTS TYPE='F') | 주식:거래원 디코드(샘플 2건, §3.10), `mas.rts.F.*` 필드. `mas.by_rts_type["F"]`에 등록 |
+| `mas_rts_y.lua` | 3 (RTS TYPE='Y') | 투자자QTY 디코드, `mas.rts.Y.*` 필드. `mas.by_rts_type["Y"]`에 등록 (§3.11) |
+| `mas_rts_z.lua` | 3 (RTS TYPE='Z') | 투자자AMT 디코드, `mas.rts.Z.*` 필드. `mas.by_rts_type["Z"]`에 등록 (§3.12) |
+| `mas_rts_lm.lua` | 3 (RTS TYPE='m', 소문자) | 시황제목/통합뉴스 디코드, `mas.rts.m.*` 필드. `mas.by_rts_type["m"]`에 등록 (§3.13, 파일명은 "lower m") |
 | `mas_tr_90.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.tr.90.*` 필드, MAS/UMP 창. `mas.by_msgk[0x90]`에 등록 |
 
 - 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
@@ -535,7 +745,11 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
   새 파일을 만들어 `mas.by_rts_type[TYPE] = {...}`를 등록하고, Transaction이면
   새 파일에서 `mas.by_msgk[해당MSGK] = {...}`를 등록하면 된다 — `mas_rts.lua`/
   `mas_tr.lua`는 건드릴 필요 없다.
-- 배포 시 **일곱 파일 모두** 플러그인 디렉터리에 복사해야 한다. 2계층 파일이
+- 배포 시 **파일 열네 개(`mas.lua`, `mas_rts.lua`, `mas_tr.lua`,
+  `mas_rts_b.lua`, `mas_rts_c.lua`, `mas_rts_u.lua`, `mas_rts_v.lua`,
+  `mas_rts_j.lua`, `mas_rts_x.lua`, `mas_rts_f.lua`, `mas_rts_y.lua`,
+  `mas_rts_z.lua`, `mas_rts_lm.lua`, `mas_tr_90.lua`) 모두** 플러그인
+  디렉터리에 복사해야 한다. 2계층 파일이
   없으면 해당 SESS 전체가 raw data로만 보이고, 3계층 파일이 없으면 그 TYPE/
   MSGK는 라벨(`type:`/`msgk:`)까지는 그대로 나오지만 고유 필드 없이
   raw data로만 보인다(§4.9).
@@ -543,7 +757,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 ## 7. 검증 이력 (참고용, 저장소에는 미포함)
 
 > **주의(2026-09-21)**: 이 아래(§7)와 §3.6/§8에 있는 과거 검증 기록 중
-> "`mas.rts.c`/`mas.rts.u`/`mas.rts.b`/`mas.tr.90` 서브트리로 태그된다/존재
+> "`mas.rts.C`/`mas.rts.U`/`mas.rts.B`/`mas.tr.90` 서브트리로 태그된다/존재
 > 필터"류 표현은 그 당시(파일 분리 리팩터 직후) 실제로 존재했던 자식 proto
 > 태깅 방식을 검증한 기록이다. 이후 §4.7에서 그 방식을 완전히 폐기했으므로
 > (지금은 `mas` 하나만 등록되고 세부 판정은 필드값으로 한다), 그런 표현이
@@ -573,7 +787,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
    `Unspecified` 단독, `(#N)`은 재조립된 프레임에만)으로 정확히 나오는지, 상세창
    라벨(`type: B`/`msgk: UMP (0x90)`/`POLL` — §4.9 이후로는 디코드
    성공/실패와 무관하게 항상 같은 라벨)과, 디코드 성공 시에만 채워지는
-   `mas.rts.b.market`/`mas.tr.90.950` 같은 필드값이 디코드 성공 여부에 정확히
+   `mas.rts.B.market`/`mas.tr.90.950` 같은 필드값이 디코드 성공 여부에 정확히
    연동되는지 확인.
 
 실제 Wireshark GUI(트리 렌더링, 표시 필터, Statistics 창의 실제 클릭 동작)는
@@ -588,9 +802,9 @@ API 스텁(`Proto`/`ProtoField`/`Tvb`/`TreeItem`을 흉내낸 테이블)으로 �
 Transaction 1 + heartbeat 1)에 대해 `mas.proto.dissector`를 직접 호출해
 확인했다: (1) `mas.by_sess`/`mas.by_rts_type`/`mas.by_msgk` 등록이 모두
 이뤄지는지, (2) 예외 없이 전체 버퍼를 소비하는지, (3) Info 컬럼이
-`RTS:2 Transaction:2 POLL`로 정확히 집계되는지, (4) `mas.rts.b`/`mas.tr.90`
+`RTS:2 Transaction:2 POLL`로 정확히 집계되는지, (4) `mas.rts.B`/`mas.tr.90`
 서브트리가 각각 정확히 1개씩만(디코드 성공 레코드만) 태그되고 나머지는
-전부 우산 `mas`로 태그되는지, (5) `mas.rts.b.price`/`mas.rts.type`/
+전부 우산 `mas`로 태그되는지, (5) `mas.rts.B.price`/`mas.rts.type`/
 `mas.tr.length`(char[] 파싱 결과가 정수인지)/`mas.tr.90.950`/`mas.tr.90.952`
 필드값이 정확한지, (6) 두 번째 프레임에서 낮은 `acc_volume`을 보내 reversal
 탐지가 `mas.by_rts_type["B"].init` 훅을 거쳐도 여전히 동작하는지. 전부 통과.
@@ -600,7 +814,7 @@ Transaction 1 + heartbeat 1)에 대해 `mas.proto.dissector`를 직접 호출해
 검증과 같은 방식 — 실제 캡처값(`KQ001` 레코드)으로 재구성한 합성 바디를
 `S.decode`에 직접 돌려 필드값과 `up+upperLimit+flat+down+lowerLimit=1523`
 항등식을 확인했고, Wireshark 스텁으로 `mas.proto.dissector`를 호출해
-(1) `mas.by_rts_type["U"]` 등록, (2) 정상 레코드만 `mas.rts.u`로 태그되고
+(1) `mas.by_rts_type["U"]` 등록, (2) 정상 레코드만 `mas.rts.U`로 태그되고
 필드 개수가 안 맞는 레코드는 우산 `mas`+expert로 폴백하는지, (3) Info 컬럼
 (`RTS:2`)이 정확한지 확인했다. 전부 통과. 저장소 미포함.
 
@@ -703,9 +917,9 @@ sep 1칸 건너뜀)이며, 이 규칙으로 정확히 `127 + 1(sep) = 128`이 �
 add_quote }`로 등록했다(§6, `mas_rts.lua`는 수정하지 않았음 — 이 refactor
 설계의 목적 그대로 새 파일 하나만 추가). 검증: `Q.decode`를 실제 캡처값
 (M.A006800 기준)으로 재구성한 합성 바디에 돌려 필드값이 정확히 나오는지, 그리고
-Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.rts.c` 서브트리가
+Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.rts.C` 서브트리가
 디코드 성공 레코드에만 태그되는지(필드 개수가 안 맞는 손상된 레코드는 우산
-`mas` + expert info로 폴백), (2) `mas.rts.b`/기존 동작에 회귀가 없는지, (3) Info
+`mas` + expert info로 폴백), (2) `mas.rts.B`/기존 동작에 회귀가 없는지, (3) Info
 컬럼(`RTS:n`)이 TYPE='C' 레코드도 정확히 카운트하는지 확인했다(전부 통과,
 저장소 미포함). Statistics 창(MAS/Quote)은 요청 범위 밖이라 만들지 않았다 —
 필요하면 §3.5 참고해 `mas_rts_b.lua`의 `MAS/Execution Prices` 창과 동일한
@@ -735,17 +949,19 @@ Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.rts.c` �
 | **B** | 13,494 | 231B | 체결(Execution Price) — 구현됨 |
 | D | 1,146 | 403B | 미확인, §8에서 언급한 80필드 변형(NXT 전용 또는 시간외 호가로 추정) |
 | **C** | 979 | 593B | 호가(Quote) 128필드 — §8/§3.5, 구현됨(`mas_rts_c.lua`) |
-| c | 281 | 212B | 미확인 |
-| V | 160 | 80B | 미확인 |
-| Y | 105 | 152B | 미확인 |
-| Z | 105 | 158B | 미확인 |
-| m | 56 | 164B | 미확인 |
+| c | 281 | 212B | 미확인(소문자 c — 대문자 C와 별개 TYPE) |
+| **V** | 160 | 80B | 해외:지수 11필드 — §3.7/§9.5, 구현됨(`mas_rts_v.lua`) |
+| **Y** | 105 | 152B | 투자자QTY 51필드 — §3.11/§9.5, 구현됨(`mas_rts_y.lua`) |
+| **Z** | 105 | 158B | 투자자AMT 51필드 — §3.12/§9.5, 구현됨(`mas_rts_z.lua`) |
+| **m** | 56 | 164B | 시황제목/통합뉴스 16필드(EUC-KR) — §3.13/§9.5, 구현됨(`mas_rts_lm.lua`) |
 | U | 12 | 45B | 업종:등락(Sector Breadth) — §3.6, 구현됨(`mas_rts_u.lua`) |
-| F | 3 | 446B | 미확인 |
-| y | 2 | 369B | 미확인 |
+| **F** | 3 | 446B | 주식:거래원 78필드 — §3.10/§9.5, 구현됨(`mas_rts_f.lua`, 샘플 2건뿐이라 신뢰도 낮음) |
+| y | 2 | 369B | 미확인(소문자 y — 대문자 Y와 별개 TYPE) |
 
 압축된 1,210개 RTS 프레임(LZO)은 미해독이라 이 표에 반영되지 않았다 — 실제로는
-더 많은 TYPE이 존재할 수 있다.
+더 많은 TYPE이 존재할 수 있다. 이 표는 2026-09-18 조사분(원 샘플 2개)만
+반영한다 — **J**(업종:시세/지수, §3.8, 구현됨)와 신규 발견 **TYPE='?'**는
+이 두 샘플에 없었고 §9.5의 새 샘플에서만 관측됐다.
 
 ### 9.3 Transaction 내부 MSGK (AXIS-HEADER)
 
@@ -758,10 +974,73 @@ Wireshark API 스텁으로 `mas.proto.dissector`를 호출해 (1) `mas.rts.c` �
 바이너리라 암호화(ACTF)로 추정되나 미확인 — 라벨은 이름 자리에 `?`가 붙어
 `msgk: ? (0x14)`로 정상 표시됨(§4.9, 버그 아님) |
 
-### 9.4 결론
+### 9.4 결론 (2026-09-18 기준)
 
-현재 `mas.lua` 플러그인이 완전히 해독하는 것은 **RTS TYPE='B'(체결)**,
+이 시점에 `mas.lua` 플러그인이 완전히 해독하는 것은 **RTS TYPE='B'(체결)**,
 **RTS TYPE='C'(호가)**, **RTS TYPE='U'(업종:등락)**, **Transaction
 MSGK=0x90(주문 결과)** 네 가지이며, 나머지(RTS의 다른 TYPE 8종 + 압축 프레임,
 Transaction의 다른 MSGK 3종)는 모두 헤더 정보 + raw data로만 표시된다. 이는
-§1에서 명시한 설계 결정과 일치하며 새로 발견된 버그는 없다.
+§1에서 명시한 설계 결정과 일치하며 새로 발견된 버그는 없다. (2026-09-21
+이후 상황은 §9.5 참고 — **V**/**J**가 추가로 구현됐다.)
+
+### 9.5. 추가 스펙 + 신규 샘플 조사 (2026-09-21)
+
+`inner/wireshark 추가.txt`에 J/U/X/V/Y/Z/m/F 8종의 필드 레이아웃 스펙이
+추가되고, `samples/20260921_nana.pcapng`(신규 캡처, 위 §9.1/§9.2와는 다른
+스트림)이 추가되면서 다시 조사했다. 방법은 §9.1/§9.2와 동일(파이썬으로
+`mas.scan`/`split_records` 재현, 스크래치패드, 저장소 미포함) — 단 이번엔
+pcapng가 **빅엔디안 byte-order-magic**으로 기록돼 있어 엔디안 자동 감지가
+필요했다(리틀엔디안으로 잘못 가정하면 블록을 전혀 못 읽는다).
+
+#### 9.5.1 새 샘플의 MAS 스트림
+
+`10.100.111.29:15201 ↔ 10.110.4.82:58278` — G/W 프레임 241개(RTS 168,
+Transaction 71, POLL 2, 압축 RTS 3건은 분석 불가).
+
+#### 9.5.2 새 샘플의 RTS TYPE 분포 + 스펙 대조
+
+| TYPE | 레코드 수 | 스펙 필드 수 | 실측 필드 수 | 상태 |
+|---|---|---|---|---|
+| B | 276 | (§3, 39) | 39 | 구현됨 |
+| **V** | 100 | 11 | **11 (전건 일치)** | **구현됨(`mas_rts_v.lua`, §3.7)** |
+| **J** | 42 | 13 | **13 (전건 일치)** | **구현됨(`mas_rts_j.lua`, §3.8)** — §9.2 원 샘플엔 없던 TYPE, 이번에 신규 발견 |
+| **Y** | 33 | 51 | 51 (전건 일치, 원 샘플 52건도 51 일치) | **구현됨(`mas_rts_y.lua`, §3.11)** — 16개 투자자 구분 코드는 이름 미상, 코드 번호로 필드명 지음 |
+| **Z** | 33 | 51 | 51 (전건 일치, 원 샘플 52건도 51 일치) | **구현됨(`mas_rts_z.lua`, §3.12)** — Y와 같은 16개 구분(코드 +400)으로 추정 |
+| **m** | 19 | 16 | 16 (전건 일치) | **구현됨(`mas_rts_lm.lua`, §3.13, EUC-KR)** — `category`/`category2` 의미는 미확인(뉴스 제공처 약칭/전체명으로 보임) |
+| **?**(0x3F) | 15 | — | 3(`issue_code`\t`sep`\t값, `sep`=자기 TYPE 문자 관례 재확인) | **스펙에 없는 신규 발견 TYPE.** 바디가 `"ATM\t?\t1105.00"`처럼 극히 단순 — "ATM"이 종목코드 자리가 아닌 것으로 보여 용도 미상 |
+| U | 10 | 10 | 10 | 구현됨 |
+| y(소문자) | 8 | — | — | 스펙 없음, 대문자 Y와 별개 TYPE |
+| **F** | 2 | 78 | **78 (양쪽 다 일치)** | **구현됨(`mas_rts_f.lua`, §3.10)** — 샘플 2건뿐이라 신뢰도 낮음. 코드 231~235/236~240은 각각 순매도%/순매수%(스펙 오류 정정) |
+
+X(업종:예상지수)는 이번 샘플에도 나타나지 않아 **실캡처 검증은 아직 못했고**
+스펙 문서의 예시 행(10필드)으로만 Wireshark Lua 스텁 디코드를 확인한 채
+구현했다(§3.9, `mas_rts_x.lua`) — 필드 이름/의미는 미검증이니 실캡처가
+확보되면 재확인이 필요하다. 원 샘플(§9.2)의 TYPE='D'(80필드 추정)와 소문자
+'c'도 이번 스펙에 포함되지 않아 여전히 미상이다.
+
+#### 9.5.3 결론
+
+2026-09-21 시점 추가로 완전히 해독되는 것은 **RTS TYPE='V'(해외:지수)**,
+**RTS TYPE='J'(업종:시세/지수)**, **RTS TYPE='X'(업종:예상지수, 실캡처
+미검증)**, **RTS TYPE='F'(주식:거래원, 샘플 2건뿐)**, **RTS TYPE='Y'
+(투자자QTY)**, **RTS TYPE='Z'(투자자AMT)**, **RTS TYPE='m'(소문자,
+시황제목/통합뉴스, 파일명 `mas_rts_lm.lua`)** 일곱 가지다. Y/Z의 16개
+투자자 구분 코드와 m의 `category`/`category2` 의미는 스펙에 이름이 없어
+여전히 미확인이다. 이번 조사로 스펙에도 없던 **TYPE='?'**를 새로 발견했다 — §4.9의
+라벨 규칙 그대로 `type: ?`로 정상 표시되며(0x3F도 `r.type`이 읽을 수 있는
+평범한 1글자일 뿐이라 코드 수정 없이 이미 처리된다), 버그가 아니다.
+
+**미구현 목록 (2026-09-21 최신, `inner/wireshark 추가.txt` 스펙 8종은 전부
+구현 완료 — J/U/X/V/Y/Z/m/F)**:
+
+| 구분 | 종류 | 상태 |
+|---|---|---|
+| RTS TYPE | `D` | 80필드 추정(원 샘플 1,146건, 403B) — 스펙 없음, 미상 |
+| RTS TYPE | 소문자 `c` (대문자 C와 별개) | 원 샘플 281건, 212B — 스펙 없음, 미상 |
+| RTS TYPE | 소문자 `y` (대문자 Y와 별개) | 새 샘플 8건 — 스펙 없음, 미상 |
+| RTS TYPE | `?`(0x3F) | 신규 발견, 항상 14B, `ATM` 레코드 — 스펙 없음, 미상 |
+| RTS | 압축(LZO) 프레임 | 압축 해제 로직 자체가 없어 내부 TYPE 전혀 알 수 없음(원 샘플 1,210건 + 새 샘플 3건) |
+| Transaction MSGK | `0x20`(Normal) | 미구현 — AXIS-HEADER만 표시 |
+| Transaction MSGK | `0x50`(RTS) | 미구현 |
+| Transaction MSGK | `0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | `mas.MSGK_NAMES` 사전엔 있으나 디코더 없음 — 미구현 |
+| Transaction MSGK | `0x14` | 사전에 없는 값, 암호화 추정 — 미상 |

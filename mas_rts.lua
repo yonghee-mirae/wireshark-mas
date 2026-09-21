@@ -18,7 +18,7 @@
 -- child proto (see PROTOCOL.md §4.7): existence filters on a child
 -- proto/wrapper item turned out to diverge from field-value filters in
 -- confusing ways, so specific filtering is field-value-only (e.g.
--- `mas.rts.type == "B"`, or a TYPE-specific field like `mas.rts.b.price`).
+-- `mas.rts.type == "B"`, or a TYPE-specific field like `mas.rts.B.price`).
 --
 -- Pure helper (split_records, required by tests) + Wireshark registration.
 -- Coordinates with core via _G.mas.
