@@ -9,16 +9,16 @@
 --       LENGTH payload length (bytes after the G/W header); NUL padding follows to the next frame
 --   Layer 2  depends on SESS, dispatched by a thin per-layer module:
 --     SESS 0x08 RTS         -> [ RTS-HEADER(6) + RTS-DATA ] repeated   (mas_rts.lua)
---     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_transaction.lua)
+--     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_tr.lua)
 --   Layer 3  depends on RTS TYPE / Transaction MSGK, one file per decoded
---   message type: mas_execution_price.lua (RTS TYPE='B'), mas_quote_price.lua
---   (RTS TYPE='C'), mas_sector_breadth.lua (RTS TYPE='U'), mas_order_report.lua
+--   message type: mas_rts_b.lua (RTS TYPE='B'), mas_rts_c.lua
+--   (RTS TYPE='C'), mas_rts_u.lua (RTS TYPE='U'), mas_tr_90.lua
 --   (Transaction MSGK=0x90). A new message type decoder is added the same way:
 --   its own file, registering into mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
 --
 -- Multi-file plugin (copy ALL into the plugins dir): mas.lua (this), mas_rts.lua,
--- mas_transaction.lua, mas_execution_price.lua, mas_quote_price.lua,
--- mas_sector_breadth.lua, mas_order_report.lua. They coordinate through the
+-- mas_tr.lua, mas_rts_b.lua, mas_rts_c.lua,
+-- mas_rts_u.lua, mas_tr_90.lua. They coordinate through the
 -- shared global `_G.mas`; each layer-2 module registers itself by SESS value
 -- (mas.by_sess), each layer-3 module registers itself by TYPE/MSGK
 -- (mas.by_rts_type / mas.by_msgk). Only the decoded message types are fully
@@ -35,7 +35,7 @@ mas.CTRL_POLL = 0x04
 mas.SESS_RTS  = 0x08
 mas.SESS_TRAN = 0x01
 mas.CTRL_NAMES = { [0x01]="Normal", [0x02]="ACK", [0x03]="NAK",
-                   [0x04]="POLL (heartbeat)", [0x05]="CheckSession" }
+                   [0x04]="POLL", [0x05]="CheckSession" }
 mas.SESS_NAMES = { [0x01]="Transaction", [0x08]="RTS", [0x99]="SessionEnd" }
 
 -- Single-bit test (avoids relying on Lua 5.3 bitwise operators).
@@ -114,10 +114,14 @@ function mas.scan(buf)
 end
 
 if _G.Proto then
-  local proto = Proto("mas", "Mirae Asset Securities")   -- umbrella / gateway (filter: mas)
-  mas.proto = proto   -- stream modules use this for undecoded/unspecified content, so
-                       -- their own child protocol (mas.ep/mas.or) only claims presence
-                       -- when content was actually decoded as that protocol
+  -- `mas` is the ONLY registered protocol in this plugin (see PROTOCOL.md §4.7)
+  -- — every other file appends its own fields to this same object via
+  -- `mas.proto.fields = {...}` rather than creating its own child Proto, so
+  -- there is nothing to filter on but `mas` itself plus field values. Guarded
+  -- with `or` since another file may have already created it first (load
+  -- order across files is intentionally not relied upon — see §6).
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
+  local proto = mas.proto
 
   -- G/W header fields (common to every MAS frame).
   local pf = {
@@ -146,7 +150,7 @@ if _G.Proto then
   end
 
   local function gw_label(item)
-    if item.ctrl == mas.CTRL_POLL then return "Heartbeat" end
+    if item.ctrl == mas.CTRL_POLL then return "POLL" end
     local name = mas.SESS_NAMES[item.sess] or string.format("SESS 0x%02x", item.sess)
     local tag = mas.hasbit(item.chck, 0x02) and " [compressed]" or ""
     return string.format("%s%s (%d bytes)", name, tag, item.len)
@@ -178,19 +182,20 @@ if _G.Proto then
 
     -- Info column is driven purely by CTRL/SESS (not decode success): every RTS
     -- frame counts toward "RTS", every Transaction frame toward "Transaction"
-    -- (compressed or not, decoded or not), CTRL=POLL toward "Heartbeat" — always
-    -- in that fixed order. RTS/Transaction's count is the number of MESSAGES
+    -- (compressed or not, decoded or not), CTRL=POLL toward "POLL" (the spec's
+    -- own name for this CTRL value — see PROTOCOL.md §2) — always in that
+    -- fixed order. RTS/Transaction's count is the number of MESSAGES
     -- actually CONTAINED, not the number of G/W frames: a single RTS G/W frame's
     -- payload is a repeated RTS-HEADER+RTS-DATA, so it can hold several records
-    -- (Execution Price and Unspecified RTS both count); a Transaction G/W frame
+    -- (decoded and undecoded TYPE records both count); a Transaction G/W frame
     -- always holds exactly one AXIS-HEADER+TR-DATA, so it always counts as 1.
     -- When the payload is compressed (or a handler otherwise isn't invoked), the
     -- contained count can't be determined, so the frame itself counts as 1.
     -- CTRL/SESS combinations outside these three ARE valid per spec (e.g. ACK/NAK/
     -- CheckSession, or SESS=SessionEnd) and, along with plain junk bytes, all count
     -- as "Unspecified" — its own bucket that coexists with the other three, always
-    -- listed last (e.g. "RTS:2 Transaction:1 Heartbeat Unspecified").
-    local cnt = { RTS = 0, Transaction = 0, Heartbeat = 0, Unspecified = 0 }
+    -- listed last (e.g. "RTS:2 Transaction:1 POLL Unspecified").
+    local cnt = { RTS = 0, Transaction = 0, POLL = 0, Unspecified = 0 }
 
     local nmsg = 0
     for _, it in ipairs(items) do
@@ -203,7 +208,7 @@ if _G.Proto then
         add_gw_header(gw, tvb, it)
         local poff, plen = it.off + 12, it.len
         if it.ctrl == mas.CTRL_POLL then
-          cnt.Heartbeat = cnt.Heartbeat + 1
+          cnt.POLL = cnt.POLL + 1
           if plen > 0 then gw:add(pf.data, tvb(poff, plen)) end
         else
           local label = (it.sess == mas.SESS_RTS) and "RTS"
@@ -238,12 +243,12 @@ if _G.Proto then
 
     -- Build the Info text in fixed order. RTS/Transaction ALWAYS show a ":count"
     -- suffix, even for exactly 1 (it's a contained-message count, not a frame
-    -- count, so it's informative even at 1). Heartbeat/Unspecified never show a
+    -- count, so it's informative even at 1). POLL/Unspecified never show a
     -- count, just the bare word. The items==0 edge case (e.g. a single
     -- unconfirmed 0xFE awaiting reassembly) still falls back to "Unspecified".
     local ALWAYS_COUNT = { RTS = true, Transaction = true }
     local parts = {}
-    for _, lbl in ipairs({ "RTS", "Transaction", "Heartbeat", "Unspecified" }) do
+    for _, lbl in ipairs({ "RTS", "Transaction", "POLL", "Unspecified" }) do
       local c = cnt[lbl]
       if c > 0 then
         parts[#parts + 1] = ALWAYS_COUNT[lbl] and (lbl .. ":" .. c) or lbl

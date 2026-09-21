@@ -4,7 +4,7 @@
 -- 128-field tab-separated body (127 named fields + 1 hidden record-type
 -- marker, same "sep" role as in TYPE='B' — see PROTOCOL.md §8). This is the
 -- only RTS TYPE this module decodes; every other TYPE is left to
--- mas_rts.lua's generic "Unspecified RTS" handling.
+-- mas_rts.lua's generic "type: <TYPE>"-only handling.
 --
 -- Field order/names are the confirmed spec cross-checked against
 -- samples/*.pcapng (PROTOCOL.md §8): ask/bid price+qty ladders (10 levels
@@ -25,7 +25,7 @@ local Q = {}   -- module table: pure helpers (returned for tests)
 Q.TYPE_QUOTE = "C"   -- the only RTS TYPE this module decodes
 
 -- issue_code prefix -> market. No dot means KRX(K). Same convention as
--- mas_execution_price.lua's E.split_market.
+-- mas_rts_b.lua's E.split_market.
 local MARKET = { M = "M", N = "N" }
 
 function Q.split_market(issue_code)
@@ -69,7 +69,7 @@ append({
   "krx_total_ask_qty", "nxt_total_ask_qty", "krx_total_bid_qty", "nxt_total_bid_qty",
 })
 
--- Strip trailing NUL bytes (see mas_execution_price for the version note).
+-- Strip trailing NUL bytes (see mas_rts_b for the version note).
 local function rstrip_nul(s)
   local e = #s
   while e > 0 and s:byte(e) == 0 do e = e - 1 end
@@ -103,35 +103,37 @@ function Q.decode(body)
 end
 
 if _G.Proto then
-  local proto_qp = Proto("mas.qp", "MAS Quote Price")   -- filter: mas.qp
+  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
+  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
 
   -- Register a string field per FIELD_NAMES entry (sep omitted), plus market.
   local pf = {}
   for _, name in ipairs(Q.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.qp." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.c." .. name, name)
     end
   end
-  pf.market = ProtoField.string("mas.qp.market", "market")
+  pf.market = ProtoField.string("mas.rts.c.market", "market")
 
   local fields = {}
   for _, f in pairs(pf) do fields[#fields + 1] = f end
-  proto_qp.fields = fields
+  mas.proto.fields = fields
 
   local expert_badfields =
-    ProtoExpert.new("mas.qp.expert.fields", "Unexpected quote field count",
+    ProtoExpert.new("mas.rts.c.expert.fields", "Unexpected quote field count",
       expert.group.MALFORMED, expert.severity.WARN)
-  proto_qp.experts = { expert_badfields }
+  mas.proto.experts = { expert_badfields }
 
-  -- Decode a TYPE='C' quote record body into the tree. Decode first so the
-  -- subtree's own protocol is proto_qp (mas.qp) ONLY on success; a malformed
-  -- TYPE='C' body (wrong field count) is tagged with the umbrella `mas`
-  -- instead, so the mas.qp presence filter means "a real quote record here"
-  -- (mirrors add_exec in mas_execution_price.lua — see PROTOCOL.md §4.7).
+  -- Decode a TYPE='C' quote record body into the tree. The subtree is always
+  -- tagged with the umbrella `mas` proto (see PROTOCOL.md §4.7) — a malformed
+  -- TYPE='C' body (wrong field count) is flagged via expert_badfields instead;
+  -- "did this decode?" is a field-value question (e.g. bare `mas.rts.c.market`),
+  -- not a presence-filter one (mirrors add_exec in mas_rts_b.lua).
   local function add_quote(tree, tvb, poff, r, pinfo, msg_index)
     local rec = Q.decode(r.body)
-    local sub = tree:add(rec and proto_qp or mas.proto, tvb(poff + r.off, 6 + r.len),
-      "Quote Price (" .. r.len .. " bytes)")
+    local sub = tree:add(mas.proto, tvb(poff + r.off, 6 + r.len),
+      "type: " .. Q.TYPE_QUOTE .. " (" .. r.len .. " bytes)")
     mas.rts_add_header(sub, tvb, poff, r)
     if not rec then
       sub:add_proto_expert_info(expert_badfields)
@@ -146,8 +148,8 @@ if _G.Proto then
   end
 
   -- Register as the TYPE='C' decoder; mas_rts.lua's generic dispatcher calls
-  -- this for every TYPE='C' record and falls back to "Unspecified RTS" itself
-  -- for any other TYPE.
+  -- this for every TYPE='C' record and falls back to a bare "type: <TYPE>"
+  -- label itself for any other TYPE.
   mas.by_rts_type[Q.TYPE_QUOTE] = { add = add_quote }
 end
 

@@ -5,13 +5,18 @@
 --     MSGK(1) ACTF(1) CHKF(1) XWIN(1) YWIN(1) KEYV(2) SVCC(4) TRNM(8) LENGTH(5 ASCII)
 -- MSGK selects the transaction kind. This module owns only the generic framing
 -- and dispatch; each MSGK's actual decoder lives in its own file (e.g.
--- mas_order_report.lua for MSGK=0x90/UMP) and registers itself into
--- `mas.by_msgk[MSGK] = { title = "...", proto = proto_obj,
---                         add = function(sub, tvb, poff, plen, pinfo) ... end }`.
--- An unregistered MSGK, or an encrypted one (ACTF encryption bit set), shows as
--- "Unspecified Transaction", AXIS-HEADER fields only, tagged with the umbrella
--- `mas` proto (not a specific child proto — see PROTOCOL.md §4.7 for why that
--- distinction matters for presence filters).
+-- mas_tr_90.lua for MSGK=0x90/UMP) and registers itself into
+-- `mas.by_msgk[MSGK] = { add = function(sub, tvb, poff, plen, pinfo) ... end }`.
+-- Every Transaction's subtree label is the generic "msgk: <name> (0x<hex>)"
+-- (MSGK is always readable from AXIS-HEADER regardless of decode success) —
+-- an unregistered MSGK, or an encrypted one (ACTF encryption bit set), gets
+-- the same label, just without any MSGK-specific fields underneath (raw
+-- `mas.data` instead). Every Transaction — decoded or not — is tagged
+-- with the umbrella `mas` proto, never a per-MSGK child proto (see PROTOCOL.md
+-- §4.7): existence filters on a child proto turned out to diverge from
+-- field-value filters in confusing ways, so specific filtering is
+-- field-value-only (e.g. `mas.tr.msgk == 0x90`, or a MSGK-specific field like
+-- `mas.tr.90.950`).
 --
 -- Wireshark registration only (no pure helpers needed by tests). Coordinates
 -- with core via _G.mas.
@@ -23,23 +28,25 @@ mas.by_msgk = mas.by_msgk or {}
 
 mas.MSGK_NAMES = {
   [0x20] = "Normal", [0x50] = "RTS", [0x80] = "Key Exchange", [0x81] = "Cert Key",
-  [0x90] = "UMP (Order Report)", [0x91] = "Dialog Popup", [0x92] = "Error",
+  [0x90] = "UMP", [0x91] = "Dialog Popup", [0x92] = "Error",
   [0x5f] = "RTS On/Off",
 }
 
 if _G.Proto then
-  local proto_axis = Proto("mas.axis", "MAS AXIS Header")   -- field namespace, not tagged on any subtree
+  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
+  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
 
   -- AXIS-HEADER fields (common to every SESS=0x01 Transaction frame, any MSGK).
   local pf = {
-    msgk = ProtoField.uint8("mas.axis.msgk", "msgk", base.HEX, mas.MSGK_NAMES),
-    actf = ProtoField.uint8("mas.axis.actf", "actf", base.HEX),
-    encrypted = ProtoField.bool("mas.axis.encrypted", "encrypted"),
-    svcc = ProtoField.string("mas.axis.svcc", "svcc"),
-    trnm = ProtoField.string("mas.axis.trnm", "trnm"),
-    length = ProtoField.uint32("mas.axis.length", "length"),
+    msgk = ProtoField.uint8("mas.tr.msgk", "msgk", base.HEX, mas.MSGK_NAMES),
+    actf = ProtoField.uint8("mas.tr.actf", "actf", base.HEX),
+    encrypted = ProtoField.bool("mas.tr.encrypted", "encrypted"),
+    svcc = ProtoField.string("mas.tr.svcc", "svcc"),
+    trnm = ProtoField.string("mas.tr.trnm", "trnm"),
+    length = ProtoField.uint32("mas.tr.length", "length"),
   }
-  proto_axis.fields = { pf.msgk, pf.actf, pf.encrypted, pf.svcc, pf.trnm, pf.length }
+  mas.proto.fields = { pf.msgk, pf.actf, pf.encrypted, pf.svcc, pf.trnm, pf.length }
 
   -- Add the AXIS-HEADER fields under `sub`. LENGTH is a 5-digit ASCII char array
   -- (e.g. "00672"), not a 4-byte binary uint32, so its value is parsed from the
@@ -67,8 +74,8 @@ if _G.Proto then
     local msgk_byte, actf_byte = payload:byte(1), payload:byte(2)
     local h = mas.by_msgk[msgk_byte]
     local will_decode = h ~= nil and not mas.hasbit(actf_byte, 0x02)
-    local title = will_decode and h.title or "Unspecified Transaction"
-    local sub = gw:add(will_decode and h.proto or mas.proto, tvb(poff, plen),
+    local title = string.format("msgk: %s (0x%02x)", mas.MSGK_NAMES[msgk_byte] or "?", msgk_byte)
+    local sub = gw:add(mas.proto, tvb(poff, plen),
       title .. " (" .. (plen - 24) .. " bytes)")
     add_axis_header(sub, tvb, poff)
 

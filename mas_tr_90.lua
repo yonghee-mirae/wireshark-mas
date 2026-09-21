@@ -1,13 +1,13 @@
 -- MAS Transaction MSGK=0x90 (UMP, 실시간주문체결통보 / Order Report) decoder.
 --
--- TR-DATA for MSGK=0x90 (see mas_transaction.lua for AXIS-HEADER framing) is a
+-- TR-DATA for MSGK=0x90 (see mas_tr.lua for AXIS-HEADER framing) is a
 -- variable, self-describing EUC-KR code/value stream (code\tvalue\t...), each
 -- field identified by a numeric code (see ORDER_FIELDS). This is the only
 -- Transaction MSGK this plugin decodes; every other MSGK is left to
--- mas_transaction.lua's generic "Unspecified Transaction" handling.
+-- mas_tr.lua's generic "msgk: <name> (0x<hex>)"-only handling.
 --
 -- Pure helpers (decode_order + dictionary, required by tests) + Wireshark
--- registration + the MAS/Order Statistics window. Coordinates via _G.mas.
+-- registration + the MAS/UMP Statistics window. Coordinates via _G.mas.
 
 local mas = _G.mas or {}
 _G.mas = mas
@@ -17,7 +17,7 @@ local O = {}   -- module table: pure helpers (returned for tests)
 
 O.MSGK_ORDER = 0x90   -- UMP: the only MSGK this module decodes
 
--- Strip trailing NUL bytes (see mas_execution_price for the version note).
+-- Strip trailing NUL bytes (see mas_rts_b for the version note).
 local function rstrip_nul(s)
   local e = #s
   while e > 0 and s:byte(e) == 0 do e = e - 1 end
@@ -85,28 +85,30 @@ function O.decode_order(body)
 end
 
 if _G.Proto then
-  local proto_or = Proto("mas.or", "MAS Order Report")   -- filter: mas.or
+  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
+  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
 
-  -- One string field per dictionary code (filter mas.or.<code>, display
+  -- One string field per dictionary code (filter mas.tr.90.<code>, display
   -- "<english name> (<code>)"). Codes are variable per message; an unknown code
-  -- falls back to mas.or.unknown. AXIS-HEADER fields live in mas_transaction.lua
-  -- (mas.axis.*), shared across every Transaction MSGK decoder.
-  local pf = { unknown = ProtoField.string("mas.or.unknown", "unknown_code") }
+  -- falls back to mas.tr.90.unknown. AXIS-HEADER fields live in mas_tr.lua
+  -- (mas.tr.*), shared across every Transaction MSGK decoder.
+  local pf = { unknown = ProtoField.string("mas.tr.90.unknown", "unknown_code") }
   local fields = { pf.unknown }
   for _, f in ipairs(O.ORDER_FIELDS) do
     local code, name = f[1], f[2]
-    pf[code] = ProtoField.string("mas.or." .. code, name .. " (" .. code .. ")")
+    pf[code] = ProtoField.string("mas.tr.90." .. code, name .. " (" .. code .. ")")
     fields[#fields + 1] = pf[code]
   end
-  proto_or.fields = fields
+  mas.proto.fields = fields
 
   -- Decode TR-DATA (poff/plen = the whole Transaction payload, AXIS-HEADER
-  -- included, matching what mas_transaction.lua's dispatcher already has) into
+  -- included, matching what mas_tr.lua's dispatcher already has) into
   -- `sub`. Values are EUC-KR, so the body is transcoded to UTF-8 before
   -- splitting; tab (0x09) never occurs inside a multibyte sequence, so the split
   -- stays correct. (Requires a Wireshark build with EUC-KR string support.)
   -- Registered into mas.by_msgk[O.MSGK_ORDER] below; called by
-  -- mas_transaction.lua's generic Transaction dispatcher.
+  -- mas_tr.lua's generic Transaction dispatcher.
   local function add_order_body(sub, tvb, poff, plen, pinfo)
     local doff, dlen = poff + 24, plen - 24
     local utf8 = (dlen > 0) and tvb(doff, dlen):string(ENC_EUC_KR) or ""
@@ -120,11 +122,11 @@ if _G.Proto then
     end
   end
 
-  -- Register as the MSGK=0x90 (UMP) decoder; mas_transaction.lua's generic
+  -- Register as the MSGK=0x90 (UMP) decoder; mas_tr.lua's generic
   -- dispatcher calls this for every unencrypted MSGK=0x90 message and falls
-  -- back to "Unspecified Transaction" itself for any other MSGK (or if
-  -- encrypted).
-  mas.by_msgk[O.MSGK_ORDER] = { title = "Order Report", proto = proto_or, add = add_order_body }
+  -- back to a bare "msgk: <name> (0x<hex>)" label itself for any other MSGK
+  -- (or if encrypted).
+  mas.by_msgk[O.MSGK_ORDER] = { add = add_order_body }
 end
 
 if gui_enabled() then
@@ -146,10 +148,14 @@ if gui_enabled() then
     { field = "958", header = "Order Price (958)",      width = 12 },
   }
   local extractors = {}
-  for i, c in ipairs(ORDER_COLUMNS) do extractors[i] = Field.new("mas.or." .. c.field) end
+  for i, c in ipairs(ORDER_COLUMNS) do extractors[i] = Field.new("mas.tr.90." .. c.field) end
 
-  register_menu("MAS/Order", function()
-    mas.open_stream_window("MAS - Order", "mas.or", ORDER_COLUMNS, extractors)
+  register_menu("MAS/UMP", function()
+    -- Tap filter is field-value-based (see PROTOCOL.md §4.7): `mas.tr.90` is no
+    -- longer tagged on any subtree, so this reproduces `will_decode` (MSGK=0x90,
+    -- unencrypted) directly from the always-present AXIS-HEADER fields instead.
+    mas.open_stream_window("MAS - UMP", "mas.tr.msgk == 0x90 && !mas.tr.encrypted",
+      ORDER_COLUMNS, extractors)
   end, MENU_STAT_UNSORTED)
 end
 

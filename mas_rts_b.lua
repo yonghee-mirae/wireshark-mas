@@ -2,10 +2,10 @@
 --
 -- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is a
 -- 39-field tab-separated body. This is the only RTS TYPE this plugin decodes;
--- every other TYPE is left to mas_rts.lua's generic "Unspecified RTS" handling.
+-- every other TYPE is left to mas_rts.lua's generic "type: <TYPE>"-only handling.
 --
 -- Pure helpers (decode/reversal, required by tests) + Wireshark registration +
--- the MAS/Execution Statistics window. Coordinates with core via _G.mas.
+-- the MAS/Execution Prices Statistics window. Coordinates with core via _G.mas.
 
 local mas = _G.mas or {}
 _G.mas = mas
@@ -107,44 +107,47 @@ function E.new_reversal()
 end
 
 if _G.Proto then
-  local proto_ex = Proto("mas.ep", "MAS Execution Price")   -- filter: mas.ep
+  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
+  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
 
-  -- Register 39 string fields as mas.ep.<key> (sep omitted), plus derived fields.
+  -- Register 39 string fields as mas.rts.b.<key> (sep omitted), plus derived fields.
   -- RTS-HEADER (KIND/TYPE/LENGTH) fields live in mas_rts.lua (mas.rts.*), shared
   -- across every RTS TYPE decoder.
   local pf = {}
   for _, name in ipairs(E.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.ep." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.b." .. name, name)
     end
   end
-  pf.market       = ProtoField.string("mas.ep.market", "market")
-  pf.acc_volume_num   = ProtoField.int64("mas.ep.acc_volume_num", "acc_volume(int)")
-  pf.price_num        = ProtoField.int64("mas.ep.price_num", "price(int)")
-  pf.trade_volume_num = ProtoField.int64("mas.ep.trade_volume_num", "trade_volume(int)")
-  pf.reversed     = ProtoField.bool("mas.ep.reversed", "reversed")
+  pf.market       = ProtoField.string("mas.rts.b.market", "market")
+  pf.acc_volume_num   = ProtoField.int64("mas.rts.b.acc_volume_num", "acc_volume(int)")
+  pf.price_num        = ProtoField.int64("mas.rts.b.price_num", "price(int)")
+  pf.trade_volume_num = ProtoField.int64("mas.rts.b.trade_volume_num", "trade_volume(int)")
+  pf.reversed     = ProtoField.bool("mas.rts.b.reversed", "reversed")
 
   local fields = {}
   for _, f in pairs(pf) do fields[#fields + 1] = f end
-  proto_ex.fields = fields
+  mas.proto.fields = fields
 
   local expert_badfields =
-    ProtoExpert.new("mas.ep.expert.fields", "Unexpected execution field count",
+    ProtoExpert.new("mas.rts.b.expert.fields", "Unexpected execution field count",
       expert.group.MALFORMED, expert.severity.WARN)
-  proto_ex.experts = { expert_badfields }
+  mas.proto.experts = { expert_badfields }
 
   local reversal = E.new_reversal()
 
   -- Decode a TYPE='B' execution record body into the tree, incl. reversal detection.
-  -- Decode first so the subtree's own protocol is proto_ex (mas.ep) ONLY on success;
-  -- a malformed TYPE='B' body (wrong field count) is tagged with the umbrella `mas`
-  -- instead, so the mas.ep presence filter means "a real execution record here".
+  -- The subtree is always tagged with the umbrella `mas` proto (see PROTOCOL.md
+  -- §4.7) — a malformed TYPE='B' body (wrong field count) is flagged via
+  -- expert_badfields instead; "did this decode?" is a field-value question
+  -- (e.g. bare `mas.rts.b.price`), not a presence-filter one.
   -- Registered into mas.by_rts_type[E.TYPE_EXEC] below; called by mas_rts.lua's
   -- generic RTS dispatcher with the signature it expects.
   local function add_exec(tree, tvb, poff, r, pinfo, msg_index)
     local rec = E.decode(r.body)
-    local sub = tree:add(rec and proto_ex or mas.proto, tvb(poff + r.off, 6 + r.len),
-      "Execution Price (" .. r.len .. " bytes)")
+    local sub = tree:add(mas.proto, tvb(poff + r.off, 6 + r.len),
+      "type: " .. E.TYPE_EXEC .. " (" .. r.len .. " bytes)")
     mas.rts_add_header(sub, tvb, poff, r)
     if not rec then
       sub:add_proto_expert_info(expert_badfields)
@@ -168,13 +171,13 @@ if _G.Proto then
   end
 
   -- Register as the TYPE='B' decoder; mas_rts.lua's generic dispatcher calls
-  -- this for every TYPE='B' record and falls back to "Unspecified RTS" itself
-  -- for any other TYPE.
+  -- this for every TYPE='B' record and falls back to a bare "type: <TYPE>"
+  -- label itself for any other TYPE.
   mas.by_rts_type[E.TYPE_EXEC] = { add = add_exec, init = function() reversal:reset() end }
 end
 
 if gui_enabled() then
-  -- Column spec: { field = mas.ep field suffix, header, width, map = optional formatter }.
+  -- Column spec: { field = mas.rts.b field suffix, header, width, map = optional formatter }.
   local EXEC_COLUMNS = {
     { field = "market",       header = "Market",   width = 6 },
     { field = "issue_code",   header = "Issue",    width = 9 },
@@ -186,10 +189,14 @@ if gui_enabled() then
       map = function(v) return v and "Y" or "" end },
   }
   local extractors = {}
-  for i, c in ipairs(EXEC_COLUMNS) do extractors[i] = Field.new("mas.ep." .. c.field) end
+  for i, c in ipairs(EXEC_COLUMNS) do extractors[i] = Field.new("mas.rts.b." .. c.field) end
 
-  register_menu("MAS/Execution", function()
-    mas.open_stream_window("MAS - Execution", "mas.ep", EXEC_COLUMNS, extractors)
+  register_menu("MAS/Execution Prices", function()
+    -- Tap filter is field-value-based (see PROTOCOL.md §4.7): `mas.rts.b` is no
+    -- longer tagged on any subtree, but `mas.rts.b.market` is always added
+    -- whenever a TYPE='B' body actually decoded, so it's an equivalent
+    -- "decode succeeded" presence check.
+    mas.open_stream_window("MAS - Execution Prices", "mas.rts.b.market", EXEC_COLUMNS, extractors)
   end, MENU_STAT_UNSORTED)
 end
 

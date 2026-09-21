@@ -3,7 +3,7 @@
 -- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is a
 -- 10-field tab-separated body: market/sector-wide advance-decline counts,
 -- not a per-stock quote. This is the only RTS TYPE this module decodes;
--- every other TYPE is left to mas_rts.lua's generic "Unspecified RTS"
+-- every other TYPE is left to mas_rts.lua's generic "type: <TYPE>"-only
 -- handling.
 --
 -- Field order/names are the confirmed spec (PROTOCOL.md §8.5), cross-checked
@@ -30,7 +30,7 @@ S.FIELD_NAMES = {
   "volume", "value",
 }
 
--- Strip trailing NUL bytes (see mas_execution_price for the version note).
+-- Strip trailing NUL bytes (see mas_rts_b for the version note).
 local function rstrip_nul(s)
   local e = #s
   while e > 0 and s:byte(e) == 0 do e = e - 1 end
@@ -64,35 +64,36 @@ function S.decode(body)
 end
 
 if _G.Proto then
-  local proto_sb = Proto("mas.sector.breadth", "MAS Sector Breadth")   -- filter: mas.sector.breadth
+  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
+  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
 
   -- Register a string field per FIELD_NAMES entry (sep omitted).
   local pf = {}
   for _, name in ipairs(S.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.sector.breadth." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.u." .. name, name)
     end
   end
 
   local fields = {}
   for _, f in pairs(pf) do fields[#fields + 1] = f end
-  proto_sb.fields = fields
+  mas.proto.fields = fields
 
   local expert_badfields =
-    ProtoExpert.new("mas.sector.breadth.expert.fields", "Unexpected sector breadth field count",
+    ProtoExpert.new("mas.rts.u.expert.fields", "Unexpected sector breadth field count",
       expert.group.MALFORMED, expert.severity.WARN)
-  proto_sb.experts = { expert_badfields }
+  mas.proto.experts = { expert_badfields }
 
-  -- Decode a TYPE='U' sector-breadth record body into the tree. Decode first
-  -- so the subtree's own protocol is proto_sb (mas.sector.breadth) ONLY on
-  -- success; a malformed TYPE='U' body (wrong field count) is tagged with the
-  -- umbrella `mas` instead, so the mas.sector.breadth presence filter means
-  -- "a real sector breadth record here" (mirrors add_exec/add_quote — see
-  -- PROTOCOL.md §4.7).
+  -- Decode a TYPE='U' sector-breadth record body into the tree. The subtree is
+  -- always tagged with the umbrella `mas` proto (see PROTOCOL.md §4.7) — a
+  -- malformed TYPE='U' body (wrong field count) is flagged via expert_badfields
+  -- instead; "did this decode?" is a field-value question, not a
+  -- presence-filter one (mirrors add_exec/add_quote).
   local function add_breadth(tree, tvb, poff, r, pinfo, msg_index)
     local rec = S.decode(r.body)
-    local sub = tree:add(rec and proto_sb or mas.proto, tvb(poff + r.off, 6 + r.len),
-      "Sector-Breadth (" .. r.len .. " bytes)")
+    local sub = tree:add(mas.proto, tvb(poff + r.off, 6 + r.len),
+      "type: " .. S.TYPE_BREADTH .. " (" .. r.len .. " bytes)")
     mas.rts_add_header(sub, tvb, poff, r)
     if not rec then
       sub:add_proto_expert_info(expert_badfields)
@@ -106,8 +107,8 @@ if _G.Proto then
   end
 
   -- Register as the TYPE='U' decoder; mas_rts.lua's generic dispatcher calls
-  -- this for every TYPE='U' record and falls back to "Unspecified RTS" itself
-  -- for any other TYPE.
+  -- this for every TYPE='U' record and falls back to a bare "type: <TYPE>"
+  -- label itself for any other TYPE.
   mas.by_rts_type[S.TYPE_BREADTH] = { add = add_breadth }
 end
 
