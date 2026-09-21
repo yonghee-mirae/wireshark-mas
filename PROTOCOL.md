@@ -91,7 +91,7 @@ KIND(1)  DUMY(1)  TYPE(1)  LENGTH(3, ASCII 숫자)  RTS-DATA(LENGTH bytes, 끝�
 **이 프로젝트가 디코드하는 것은 `TYPE='B'`(체결, Execution Price)뿐이다.**
 그 외 TYPE은 KIND/TYPE/LENGTH 헤더만 표시하고 본문은 `mas.data`(raw)로 남긴다.
 
-### TYPE='B' 필드 레이아웃 (39필드, `inner/Execution_layout.txt` 원본)
+### TYPE='B' 필드 레이아웃 (39필드, `inner/Execution_layout.txt` 원본 — NXT 비교차상장 종목은 마지막 3필드 생략된 36필드, §9.6)
 
 탭 구분 39필드, `E.FIELD_NAMES`(코드 순서 그대로) 참고:
 
@@ -109,6 +109,18 @@ static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
   `"K"`(KRX). `E.split_market()`.
 - `sep`는 필드 개수/위치 정렬을 위해 `FIELD_NAMES`에는 남아 있지만 Wireshark
   필드로는 등록하지 않는다(표시 불필요, 과거 요청 반영).
+- **마지막 3필드(`trade_market`, `nxt_vi_upper`, `nxt_vi_lower`)는 NXT
+  교차상장 종목에만 존재한다 — 2026-09-21 `samples/tcp_capture.cap`(port
+  8961, 신규 서버) 조사로 발견**: 이 3필드는 **NXT 전용**이라, `issue_code`에
+  `"M."`/`"N."` 마켓 접두어가 붙은(NXT 교차상장) 종목만 39필드 전부를
+  보내고, 접두어 없는(KRX 전용) 종목은 **이 3필드를 통째로 생략한 36필드만**
+  보낸다(빈 문자열이 아니라 필드 자체가 없음). 이 캡처의 TYPE='B' 1,777건
+  전수 조사 결과 **정확히 두 경우만 존재**했다(36필드 1,703건/접두어 없음,
+  39필드 74건/접두어 있음 — 예외 없음). 기존 검증 샘플(원 2개 + nana)은
+  TYPE='B'가 우연히 전부 NXT 교차상장 종목(39필드)이라 이 분기를 한 번도
+  타보지 못했었다. `E.decode`는 이제 36/39 둘 다 정상으로 받아들이고,
+  36필드일 때는 저 3필드를 `rec`에서 아예 비워(nil) 상세창에도 표시하지
+  않는다(§4.7의 "존재하지 않으면 안 채운다" 원칙과 동일).
 - 파생 필드: `market`, `acc_volume_num`/`price_num`/`trade_volume_num`(정수),
   `reversed`(누적거래량 역전 탐지, 5-tuple+market+issue_code 단위, 프레임
   재방문 시에도 안정적인 idempotent 캐시).
@@ -1044,3 +1056,48 @@ X(업종:예상지수)는 이번 샘플에도 나타나지 않아 **실캡처 �
 | Transaction MSGK | `0x50`(RTS) | 미구현 |
 | Transaction MSGK | `0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | `mas.MSGK_NAMES` 사전엔 있으나 디코더 없음 — 미구현 |
 | Transaction MSGK | `0x14` | 사전에 없는 값, 암호화 추정 — 미상 |
+
+### 9.6. TYPE='B' 디코드 실패 조사 (2026-09-21, `samples/tcp_capture.cap`)
+
+**사용자 보고**: `samples/tcp_capture.cap`(port 8961에서 MAS 전문 송신, 서버
+`103.60.123.131:8961` ↔ 클라이언트 `121.141.26.124:24101`)을 추가했는데,
+**RTS TYPE='B'(체결) 레코드 중 일부가 정상적으로 해석되지 않는다**는 보고.
+
+**조사**: 기존 두 샘플은 pcapng였지만 이 파일은 **클래식 libpcap 포맷**
+(매직 `a1b2c3d4`, 빅엔디안)이라 별도 파서가 필요했다(스크래치패드,
+저장소 미포함 — pcapng 파서와 TCP 재조립/`mas.scan`/`split_records`
+로직은 재사용). Port 8961 스트림에서 TYPE='B' 레코드 **1,777건 전수**를
+추출해 필드 개수를 집계:
+
+| `issue_code` 접두어 | 필드 개수 | 건수 |
+|---|---|---|
+| 없음(KRX 전용, 예: `A005935`) | 36 | 1,703 (95.8%) |
+| `M.`/`N.`(NXT 교차상장, 예: `M.A475830`) | 39 | 74 (4.2%) |
+
+**예외 없이 딱 이 두 조합만** 존재했다 — 즉 "일부만 해석 안 됨"의 정체는
+**손상 데이터가 아니라, NXT 비교차상장 종목은 마지막 3필드
+(`trade_market`, `nxt_vi_upper`, `nxt_vi_lower`)를 아예 안 보내는 정상
+동작**이었다. `E.decode`가 `#fields ~= 39`면 무조건 `nil`(디코드 실패)을
+반환하던 게 원인 — 39필드만 유효하다고 가정한 채 36필드 전문 전체를
+`Unspecified` 취급하고 있었다.
+
+기존 검증 샘플(원 2개, §9.2 — 13,770건 / `nana.pcapng`, §9.5 — 276건)은
+**TYPE='B'가 우연히 전부 NXT 교차상장 종목(39필드)**이라 이 분기를 한 번도
+노출하지 못했다 — 이번에 처음으로 KRX 전용 종목이 섞인 샘플이 들어오면서
+드러났다.
+
+**수정**: `mas_rts_b.lua`의 `E.decode`가 36 또는 39 필드 둘 다 유효로
+받아들이도록 변경(`E.FIELD_NAMES_BASE_COUNT = 36`), 36필드일 때는 마지막
+3필드를 `rec`에 아예 채우지 않는다. `add_exec`의 필드 표시 루프도
+`rec[name]`이 `nil`인 필드는 건너뛰도록 가드 추가(그냥 두면
+`TreeItem:add()`가 값 인자 없이 tvbrange 원본 바이트를 그대로 보여줘 엉뚱한
+값이 표시됨). 39필드도 아니고 36필드도 아닌 진짜 손상 레코드는 여전히
+`expert_badfields`로 정상 플래그된다(예: 4필드짜리 합성 레코드로 스텁
+테스트에서 확인).
+
+**검증**: 실제 캡처된 36필드 레코드(`A005935\tB\t...`)와 39필드 레코드
+(`M.A475830\tB\t...`) 둘 다 Wireshark Lua 스텁으로 디코드 성공(expert info
+없음) 확인, 36필드 레코드는 `mas.rts.B.trade_market`/`nxt_vi_upper`/
+`nxt_vi_lower`가 전혀 추가되지 않음을, 39필드 레코드는 셋 다 정상 추가됨을
+확인. 4필드짜리 합성 손상 레코드는 여전히 `expert_badfields` 1회 발생함을
+확인 — 전부 통과.

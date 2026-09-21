@@ -50,8 +50,22 @@ local function rstrip_nul(s)
   return s:sub(1, e)
 end
 
--- Split a tab-separated TYPE='B' body into a record keyed by FIELD_NAMES. Returns
--- nil if field count != 39. Trailing NULs are stripped; issue_code -> (market, base).
+-- The last 3 fields (trade_market, nxt_vi_upper, nxt_vi_lower) are NXT-only:
+-- confirmed against samples/tcp_capture.cap (port 8961, 1,777 TYPE='B'
+-- records) that every record whose issue_code has no market prefix (plain
+-- KRX-only issue, not NXT-cross-listed) is exactly 36 fields — those 3
+-- trailing fields are omitted entirely, not blank/zero-filled — while every
+-- "M."/"N."-prefixed (NXT-cross-listed) issue is exactly 39 fields, with no
+-- exceptions across 1,777 records. Earlier samples (20260915_0809_RTS*.pcapng,
+-- 20260921_nana.pcapng) never exposed this because every TYPE='B' record in
+-- them happened to be NXT-cross-listed (39 fields), so the decoder only
+-- required exactly 39 until this was found.
+E.FIELD_NAMES_BASE_COUNT = 36
+
+-- Split a tab-separated TYPE='B' body into a record keyed by FIELD_NAMES.
+-- Returns nil if field count isn't 36 or 39 (see above). Trailing NULs are
+-- stripped; issue_code -> (market, base). With 36 fields, the 3 NXT-only
+-- keys are simply absent from `rec` (nil), not empty strings.
 function E.decode(body)
   local fields = {}
   local start = 1
@@ -65,10 +79,10 @@ function E.decode(body)
       break
     end
   end
-  if #fields ~= #E.FIELD_NAMES then return nil end
+  if #fields ~= E.FIELD_NAMES_BASE_COUNT and #fields ~= #E.FIELD_NAMES then return nil end
 
   local rec = {}
-  for k = 1, #E.FIELD_NAMES do
+  for k = 1, #fields do
     rec[E.FIELD_NAMES[k]] = rstrip_nul(fields[k])
   end
   rec.market, rec.issue_code = E.split_market(rec.issue_code)
@@ -156,7 +170,11 @@ if _G.Proto then
     local base = poff + r.off + 6   -- body start within tvb
     sub:add(pf.market, tvb(base, r.len), rec.market)   -- shown right after length, before issue_code
     for _, name in ipairs(E.FIELD_NAMES) do
-      if pf[name] then sub:add(pf[name], tvb(base, r.len), rec[name]) end
+      -- rec[name] is nil for the 3 NXT-only trailing fields on a 36-field
+      -- (non-NXT-listed) record — must skip explicitly, not just check
+      -- pf[name], or TreeItem:add() falls back to showing the raw tvbrange
+      -- (the whole record body) under that field instead of omitting it.
+      if pf[name] and rec[name] then sub:add(pf[name], tvb(base, r.len), rec[name]) end
     end
     local an = tonumber(rec.acc_volume);   if an then sub:add(pf.acc_volume_num, tvb(base, r.len), Int64(an)) end
     local pn = tonumber(rec.price);        if pn then sub:add(pf.price_num, tvb(base, r.len), Int64(pn)) end
