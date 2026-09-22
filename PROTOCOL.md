@@ -37,6 +37,11 @@ SOF(1)=0xFE  SOF(1)=0xFE  CTRL(1)  SESS(1)  CHCK(1)  RSVD(2)  LENGTH(5, ASCII �
 - **CTRL** (설계 문서 §1.1): `0x01` Normal, `0x02` ACK, `0x03` NAK,
   **`0x04` POLL(heartbeat, 300초 타임아웃)**, `0x05` CheckSession/세션종료
   (`ctrl=0x05 + sess=0x99`).
+  - **POLL은 서버-클라이언트 연결 확인용으로, 항상 추가 데이터 없이 이
+    G/W HEADER 12바이트 형태로만 송수신된다.** 그 이상 해석할 내용이
+    없어 헤더 인식만으로 처리가 끝나는 게 정상 동작이다 — **구현
+    완료**(`mas.CTRL_POLL`로 판별, 상세창/Info 컬럼 모두 `POLL`로 표시,
+    §6.2).
 - **SESS**: `0x01` Transaction, **`0x08` RTS(실시간데이터)**, `0x99` 세션종료.
 - **CHCK**: 비트 플래그. `0x20` 항상 세팅, **`0x02` 압축 플래그(LZO)**,
   `0x08` 연속(continuation) 데이터, `0x01` ACK 요청, `0x80` 에러메시지.
@@ -597,7 +602,6 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | RTS KIND `I` | RTS-Symbol 리스트 | KIND='D'와 레이아웃이 다를 수 있어 TYPE 디스패치 자체를 안 탐(설계 결정) |
 | Transaction MSGK `0x20`/`0x50`/`0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | §5 참고 | 요청 범위 밖(주문체결·체결시세만 지원) |
 | Transaction MSGK `0x14` | `mas.MSGK_NAMES` 사전에도 없음 | 암호화 추정, 미확인 |
-| POLL | CTRL=`0x04` | 데이터 없음(heartbeat), 상세창·Info 모두 `POLL` |
 
 **RTS 압축(LZO) 미구현 방침**: 설계 문서상 대량데이터 흐름은 "구간
 암호화(Xecure Mobile) 후 압축(LZO)" 순서라, 압축 프레임은 암호화도 함께
