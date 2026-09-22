@@ -588,7 +588,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 
 | 구분 | 값 | 이유 |
 |---|---|---|
-| RTS 압축 | CHCK bit `0x02`(LZO) | 압축 해제 로직 자체가 없어 내부 TYPE 전혀 알 수 없음 |
+| RTS 압축 | CHCK bit `0x02`(LZO) | 압축 해제 로직 자체가 없어 내부 TYPE 전혀 알 수 없음(구현 보류 결정, 아래 참고) |
 | Transaction 암호화 | ACTF bit `0x02`(Xecure/XecureMobile) | 키 없음 |
 | RTS TYPE `D` | 80필드 추정 | 스펙 없음 |
 | RTS TYPE 소문자 `c` | 대문자 C와 별개 TYPE | 스펙 없음 |
@@ -598,6 +598,15 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | Transaction MSGK `0x20`/`0x50`/`0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | §5 참고 | 요청 범위 밖(주문체결·체결시세만 지원) |
 | Transaction MSGK `0x14` | `mas.MSGK_NAMES` 사전에도 없음 | 암호화 추정, 미확인 |
 | POLL | CTRL=`0x04` | 데이터 없음(heartbeat), 상세창·Info 모두 `POLL` |
+
+**RTS 압축(LZO) 미구현 방침**: 설계 문서상 대량데이터 흐름은 "구간
+암호화(Xecure Mobile) 후 압축(LZO)" 순서라, 압축 프레임은 암호화도 함께
+걸려 있는 게 정상 동작으로 보인다(실제로 `liblzo2`의 표준 디코더로는
+실캡처 압축 프레임이 풀리지 않음 — 표준 LZO가 아니거나 암호화가 섞여
+있다는 뜻). 암호화가 항상 같이 걸려 있다면 압축만 풀어도 여전히
+암호문이라 실익이 없으므로, **압축 해제 단독 구현은 하지 않는다.**
+재개하려면 Xecure Mobile 복호화(키 교환 포함)를 먼저 확보해 "복호화 →
+압축 해제" 순서로 함께 접근해야 한다.
 
 새 TYPE/MSGK를 구현하려면:
 
