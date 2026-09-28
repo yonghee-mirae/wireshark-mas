@@ -3,7 +3,8 @@
 이 문서는 `mas.lua` / `mas_rts.lua` / `mas_tr.lua` / `mas_rts_b.lua` /
 `mas_rts_c.lua` / `mas_rts_u.lua` / `mas_rts_v.lua` / `mas_rts_j.lua` /
 `mas_rts_x.lua` / `mas_rts_f.lua` / `mas_rts_y.lua` / `mas_rts_z.lua` /
-`mas_rts_lm.lua` / `mas_rts_ls.lua` / `mas_rts_lq.lua` / `mas_tr_90.lua`가
+`mas_rts_lm.lua` / `mas_rts_ls.lua` / `mas_rts_lq.lua` / `mas_rts_lre.lua` /
+`mas_tr_90.lua`가
 해석하는 와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한
 것이다(파일 구조는 §6 참고). 근거는
 `design/AXIS-4.1.0_Protocol_WTS_ADD.docx`(원 설계 문서), `inner/wireshark
@@ -117,7 +118,8 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | `m`(소문자) | 시황제목/통합뉴스 | 16 | `mas_rts_lm.lua` | 높음 — 75건 전건 일치 |
 | `s`(소문자) | 해외주식 체결 | 41 | `mas_rts_ls.lua` | 중간 — 11건(§3.11), 항등식 전건 일치 — 관측된 코드가 전부 `2`(상승)라 하락/보합/상한/하한은 스펙 예시로만 검증 |
 | `q`(소문자) | 해외주식 호가 | 72 | `mas_rts_lq.lua` | 높음 — 42건(§3.12), 잔량 합계 항등식 전건 일치(잔량변화 합계는 상위 10단계 밖 변동으로 39/42, 35/42) |
-| `D`, 소문자 `c`/`y`, `?`(0x3F), `r`(=`e`), `R` | — | — | 미구현 | §7 참고 |
+| `r`(소문자, =`e`) | 해외선물옵션 체결 | 15 | `mas_rts_lre.lua` | 중간 — `r` 340건(§3.13) 전건 일치; `e`는 스펙상 같은 레이아웃이나 실캡처 0건(미검증) |
+| `D`, 소문자 `c`/`y`, `?`(0x3F), `R` | — | — | 미구현 | §7 참고 |
 
 ### 3.1 TYPE='B' 필드 레이아웃 (`inner/Execution_layout.txt`)
 
@@ -146,12 +148,25 @@ static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
   표시하지 않는다. `add_exec`의 필드 표시 루프도 `rec[name]`이 `nil`이면
   건너뛴다. 39/36 둘 다 아닌 진짜 손상 레코드만 `expert_badfields`로
   플래그된다.
+- `change`(전일대비)는 **코드+수치** 필드 — TYPE='r'/'e'(§3.13)의 `change`/
+  `mas_rts_ls.lua`의 `change`/`regular_change`/`day_regular_diff`와 같은
+  컨벤션(선행 1글자가 1..5 전일대비구분 코드, 나머지가 ASCII 십진 크기).
+  상세창 표시도 동일: `값(코드;의미)`(예: `"12900 (2;상승)"`). 실캡처
+  1,777건(`tcp_capture.cap`) 전건에서 `change`가 1..5 코드로 시작하고,
+  `|price| - decode_coded(change)`가 `|price|/(1+change_rate/100)`(등락율로
+  독립적으로 구한 기준가)와 등락율의 소수점 2자리 정밀도에서 오는 반올림
+  오차 범위 내로 일치 — `price`/`open_price`/`high_price`/`low_price` 등
+  가격류 필드 자체의 부호가 "기준가 대비 플래그"라는 사실(§3.13에서 먼저
+  발견, `mas_rts_lre.lua`의 `r` 340건과 교차검증)과는 별개로, `change`는
+  처음부터 `s`/`r` 계열과 동일한 코드+수치 인코딩이었다(사용자 확인,
+  2026-09-28).
 - 파생 필드: `market`, `acc_volume_num`/`price_num`/`trade_volume_num`(정수),
-  `reversed`(누적거래량 역전 탐지, 5-tuple+market+issue_code 단위, 프레임
-  재방문 시에도 안정적인 idempotent 캐시).
+  `change_num`(코드+수치 디코드값, double), `reversed`(누적거래량 역전 탐지,
+  5-tuple+market+issue_code 단위, 프레임 재방문 시에도 안정적인 idempotent
+  캐시).
 - 필드: `mas.rts.B.<field>`(39필드 중 `sep` 제외), `mas.rts.B.market`,
   `mas.rts.B.acc_volume_num`, `mas.rts.B.price_num`,
-  `mas.rts.B.trade_volume_num`, `mas.rts.B.reversed`.
+  `mas.rts.B.trade_volume_num`, `mas.rts.B.change_num`, `mas.rts.B.reversed`.
 - Statistics 창: **MAS/Execution Prices** — Market/Issue/Time/Price/TrdVol/
   AccVol/Reversed 컬럼, 5-tuple(Flow) 별 구분. tap 필터는 `mas.rts.B.market`.
 
@@ -440,6 +455,64 @@ total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
   스펙 필드 목록에는 없지만 실측 바디에 존재해 `FIELD_NAMES`에 포함했다
   (`mas_rts_ls.lua`/`mas_rts_v.lua`의 `key` 컨벤션과 동일).
 - 필드: `mas.rts.q.<field>`(72필드 전부).
+- Statistics 창: 없음(요청 범위 밖).
+
+### 3.13 TYPE='r'/'e' 필드 레이아웃 — 해외선물옵션 체결 (`mas_rts_lre.lua`, `protocols/해외.txt`)
+
+- `r`과 `e`는 스펙상 완전히 같은 레이아웃이다(`protocols/해외.txt`: "type e /
+  해외선물옵션 체결(SnapShot Filter) ... type r와 동일"). 하나의
+  decode()/add()를 두 TYPE 키(`mas.by_rts_type["r"]`, `["e"]`) 모두에
+  등록했다. 실캡처에서는 `r`만 340건 관측됐고 `e`는 0건(미검증)이다.
+- 파일명은 `mas_rts_lre.lua`("lower r/e")다. 둘 다 이미 소문자라 §8의
+  소문자 TYPE 네이밍 규칙(`mas_rts_lm.lua`/`mas_rts_ls.lua`/`mas_rts_lq.lua`
+  와 동일한 이유)에 따라 `mas_rts_r.lua`/`mas_rts_e.lua`가 아니라 이 이름을
+  쓴다 — `mas_rts_r.lua`는 미래에 대문자 TYPE='R'(해외선물옵션 호가, §7)이
+  구현될 때를 위해 남겨둔다.
+- **필터는 `r`/`e`를 개별로 처리할 수 있도록 필드 프리픽스를 분리했다**:
+  `mas.rts.r.<field>`와 `mas.rts.e.<field>`를 각각 별도의 `ProtoField`로
+  등록해서(§6.3의 "필드 프리픽스만으로 TYPE을 식별할 수 있다"는 기존
+  컨벤션과 동일, 예: `mas.rts.B.price`가 TYPE='B'를 함의), `mas.rts.r.price`
+  같은 필터가 `mas.rts.type`을 따로 확인할 필요 없이 그 자체로 TYPE='r'
+  레코드만 가리킨다. 상세창 라벨(`"type: r"` / `"type: e"`)도 레코드의
+  실제 와이어 바이트(`r.type`)를 그대로 쓴다(하드코딩 상수 아님) — 한
+  add() 함수가 두 TYPE을 함께 처리하기 때문.
+
+탭 구분 15필드, `LRE.FIELD_NAMES`(코드 순서 그대로):
+
+```
+key type_echo trade_time price change change_rate
+ask_price bid_price trade_volume acc_volume
+open_price high_price low_price trade_date business_date
+```
+
+- `change`(024/전일대비)는 **코드+수치** 필드 — `mas_rts_ls.lua`의
+  `change`/`regular_change`/`day_regular_diff`와 같은 컨벤션(선행 1글자가
+  1..5 전일대비구분 코드, 나머지가 ASCII 십진 크기). 상세창 표시도 동일:
+  `값(코드;의미)`(예: `"0.84 (5;하락)"`). `samples/GlobalPart_RTS.pcapng`의
+  실캡처 `r` 340건에서 `|price| - decode_coded(change)`가 정확히 상수
+  (90.52, 종목 `CLX26`의 기준가)로 전건 일치.
+- `price`/`ask_price`/`bid_price`/`open_price`/`high_price`/`low_price`는
+  **부호+크기** 필드다. 선행 문자(`+`/`-`/`' '`=보합)는 그 필드 고유의
+  수학적 부호가 **아니다**(실제 가격은 음수가 될 수 없다) — "이 필드의
+  크기가 기준가 이상(`+`)/미만(`-`)"을 뜻하는 정보성 플래그다. 이건
+  `mas_rts_b.lua`(TYPE='B', 국내 체결)의 동일 필드군(1,777건, 다양한
+  종목·양방향, 레코드 내에서 필드마다 부호가 다른 8건 포함)으로 교차검증—
+  "크기 ≥ 기준가(=|price|/(1+등락율%))" 규칙이 5,327건 전수 일치, 그리고
+  `r` 자신의 340건에도(기준가=90.52) 재적용해 전건 일치. 상세창에는
+  파생/가공 없이 와이어 그대로 표시한다(별도 stripped-magnitude 필드는
+  요청되지 않아 추가하지 않음).
+- `change_rate`(033/등락율)는 `부호(+/-/' ')` + `계산된 값의 부호 포함
+  문자열`을 그대로 이어붙인 형태다(사용자 확인, 2026-09-28) — 하락일 때
+  둘 다 `-`라 `"--0.93"`처럼 이중 대시로 보이고, 상승일 때는 계산값
+  자체가 양수(고유 부호 없음)라 `+`가 하나만 남는다. 상세창에는 원본
+  그대로 표시(파싱/가공 없음).
+- `trade_volume`(032/체결량)은 실측에서 `"-1"`처럼 부호 있는 값이
+  관측됐으나(체결 방향? 미확인), 가격류 필드와 달리 "값이 항상 양수"라는
+  근거가 없어 별도 가공 없이 원본 그대로(plain) 표시한다.
+- `key`(종목 심볼, 예: `"CLX26"`)와 `type_echo`(000, 관측값 `"r"`)는
+  `mas_rts_lq.lua`와 같은 이유로 `FIELD_NAMES`에 포함.
+- 필드: `mas.rts.r.<field>`(15필드), `mas.rts.e.<field>`(같은 15필드, 실캡처
+  미검증).
 - Statistics 창: 없음(요청 범위 밖).
 
 ## 4. Layer 2/3 — Transaction (SESS=0x01)
@@ -754,8 +827,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | RTS TYPE 소문자 `c` | 대문자 C와 별개 TYPE | 스펙 없음 |
 | RTS TYPE 소문자 `y` | 대문자 Y와 별개 TYPE | 스펙 없음 |
 | RTS TYPE `?`(0x3F) | 항상 14B, `ATM` 레코드(`issue_code\tsep\t값`) | 신규 발견, 스펙 없음, 용도 미상 |
-| RTS TYPE `r`(=`e`, 해외선물옵션 체결) | 15필드, `GlobalPart_RTS.pcapng`에 실캡처 340건(`r`만 관측, `e`는 0건) | 스펙은 있으나 `033(등락율)`이 `"--0.93"`처럼 부호 있는 실수로 파싱 안 되는 값이 실측에 있어 보류(원인 미상) |
-| RTS TYPE `R`(해외선물옵션 호가) | `GlobalPart_RTS.pcapng`에 실캡처 274건 | 스펙은 있으나 아직 분석 안 함 |
+| RTS TYPE `R`(해외선물옵션 호가) | `GlobalPart_RTS.pcapng`에 실캡처 274건, 39필드 레이아웃 100% 항등식 검증 완료 | 구현은 안 함(분석만 기록, §3.13/`r`과 같은 부호=기준가 플래그 컨벤션 적용 가능) |
 | RTS KIND `I` | RTS-Symbol 리스트 | KIND='D'와 레이아웃이 다를 수 있어 TYPE 디스패치 자체를 안 탐(설계 결정) |
 | Transaction MSGK `0x20`/`0x50`/`0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | §5 참고 | 요청 범위 밖(주문체결·체결시세만 지원) |
 | Transaction MSGK `0x14` | `mas.MSGK_NAMES` 사전에도 없음 | 암호화 추정, 미확인 |
@@ -806,6 +878,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | `mas_rts_lm.lua` | 3 (RTS TYPE='m', 소문자) | 시황제목/통합뉴스 디코드, `mas.rts.m.*` 필드. `mas.by_rts_type["m"]`에 등록 (§3.10, 파일명은 "lower m") |
 | `mas_rts_ls.lua` | 3 (RTS TYPE='s', 소문자) | 해외주식 체결 디코드, `mas.rts.s.*` 필드. `mas.by_rts_type["s"]`에 등록 (§3.11, 파일명은 "lower s") |
 | `mas_rts_lq.lua` | 3 (RTS TYPE='q', 소문자) | 해외주식 호가 디코드, `mas.rts.q.*` 필드. `mas.by_rts_type["q"]`에 등록 (§3.12, 파일명은 "lower q") |
+| `mas_rts_lre.lua` | 3 (RTS TYPE='r'/'e', 소문자) | 해외선물옵션 체결 디코드, `mas.rts.r.*`/`mas.rts.e.*` 필드(개별 프리픽스). `mas.by_rts_type["r"]`/`["e"]` 둘 다에 등록 (§3.13, 파일명은 "lower r/e") |
 | `mas_tr_90.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.tr.90.*` 필드, MAS/UMP 창. `mas.by_msgk[0x90]`에 등록 |
 
 - 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
@@ -846,7 +919,9 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
   레벨에서는 이 규칙이 필요 없다). 같은 이유로 TYPE='s'는 `mas_rts_ls.lua`
   ("lower s", §3.11), TYPE='q'는 `mas_rts_lq.lua`("lower q", §3.12)로
   지었다. 소문자 `c`/`y`를 구현하게 되면 `mas_rts_lc.lua`/`mas_rts_ly.lua`로
-  지을 것.
+  지을 것. TYPE='r'/'e'는 둘 다 이미 소문자에 레이아웃도 동일해
+  `mas_rts_lre.lua`("lower r/e")로 합쳐 지었다(§3.13) — `mas_rts_r.lua`는
+  대문자 TYPE='R'(§7, 해외선물옵션 호가) 구현 시를 위해 남겨둔다.
 - 배포 시 **파일 열여섯 개**(위 표 전부) 모두 플러그인 디렉터리에
   복사해야 한다. 2계층 파일이 없으면 해당 SESS 전체가 raw data로만
   보이고, 3계층 파일이 없으면 그 TYPE/MSGK는 라벨(`type:`/`msgk:`)까지는

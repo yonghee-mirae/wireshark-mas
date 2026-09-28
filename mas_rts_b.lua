@@ -15,6 +15,31 @@ local E = {}   -- module table: pure helpers (returned for tests)
 
 E.TYPE_EXEC = "B"   -- the only RTS TYPE this module decodes
 
+-- `change`(전일대비) is a **코드+수치** field, same convention as
+-- mas_rts_ls.lua's `change`/mas_rts_lre.lua's `change` (field_spec.md):
+-- leading char is the 1..5 전일대비구분 code, rest is the ASCII decimal
+-- magnitude with no separator (e.g. "212900" = code '2'(상승) + magnitude
+-- "12900"). Confirmed against all 1777 real TYPE='B' records
+-- (samples/tcp_capture.cap): every record's `change` starts with a digit
+-- 1..5 (0 exceptions), and `|price| - decode_coded(change)` matches
+-- `|price|/(1+change_rate/100)`(기준가, derived independently from the
+-- rate field) within rounding noise from change_rate's 2-decimal precision.
+-- Dictionary duplicated locally per this project's per-file convention.
+E.CHANGE_SIGN = { ["1"] = 1, ["2"] = 1, ["3"] = 0, ["4"] = -1, ["5"] = -1 }
+E.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
+
+-- Decode a 코드+수치 field ("212900" -> 12900 상승, "59800" -> -9800 하락).
+-- Returns nil if the leading character isn't a known 전일대비구분 code or the
+-- remainder isn't numeric. Same convention as mas_rts_ls.lua's S.decode_coded.
+function E.decode_coded(tok)
+  if not tok or #tok < 1 then return nil end
+  local sign = E.CHANGE_SIGN[tok:sub(1, 1)]
+  if not sign then return nil end
+  local mag = tonumber(tok:sub(2))
+  if not mag then return nil end
+  return sign * mag
+end
+
 -- issue_code prefix -> market. No dot means KRX(K).
 local MARKET = { M = "M", N = "N" }
 
@@ -144,6 +169,7 @@ if _G.Proto then
   pf.acc_volume_num   = ProtoField.int64("mas.rts.B.acc_volume_num", "acc_volume(int)")
   pf.price_num        = ProtoField.int64("mas.rts.B.price_num", "price(int)")
   pf.trade_volume_num = ProtoField.int64("mas.rts.B.trade_volume_num", "trade_volume(int)")
+  pf.change_num       = ProtoField.double("mas.rts.B.change_num", "change(decoded)")
   pf.reversed     = ProtoField.bool("mas.rts.B.reversed", "reversed")
 
   local fields = {}
@@ -183,13 +209,29 @@ if _G.Proto then
       -- (the whole record body) under that field instead of omitting it.
       if pf[name] and rec[name] then
         local o = rec.__offsets[name]
-        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+        if name == "change" then
+          -- 코드&수치 필드: 값에서 코드를 떼어 수치만 보여주고, "값(코드;의미)",
+          -- e.g. "12900 (2;상승)". 코드가 알려지지 않은 값이면 원본 그대로.
+          local code = rec[name]:sub(1, 1)
+          local label = E.CHANGE_LABEL[code]
+          if label then
+            local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name]:sub(2))
+            ti:append_text(" (" .. code .. ";" .. label .. ")")
+          else
+            sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+          end
+        else
+          sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+        end
       end
     end
     local av_off, pr_off, tv_off = rec.__offsets.acc_volume, rec.__offsets.price, rec.__offsets.trade_volume
     local an = tonumber(rec.acc_volume);   if an then sub:add(pf.acc_volume_num, tvb(base + av_off.off, av_off.len), Int64(an)) end
     local pn = tonumber(rec.price);        if pn then sub:add(pf.price_num, tvb(base + pr_off.off, pr_off.len), Int64(pn)) end
     local tn = tonumber(rec.trade_volume); if tn then sub:add(pf.trade_volume_num, tvb(base + tv_off.off, tv_off.len), Int64(tn)) end
+    local ch_off = rec.__offsets.change
+    local chg = E.decode_coded(rec.change)
+    if chg then sub:add(pf.change_num, tvb(base + ch_off.off, ch_off.len), chg) end
 
     local seq = pinfo.number * 1000 + msg_index
     local rev, prev_frame = reversal:eval(
