@@ -41,13 +41,27 @@ E.FIELD_NAMES = {
   "nxt_vi_lower",
 }
 
--- Strip trailing NUL bytes. Version-agnostic: Lua 5.2+ does not treat %z as a
--- NUL-byte pattern class (that was Lua 5.1/LuaJIT-only), so a plain byte scan is
--- used instead of a gsub("%z+$", "") pattern.
-local function rstrip_nul(s)
-  local e = #s
-  while e > 0 and s:byte(e) == 0 do e = e - 1 end
-  return s:sub(1, e)
+-- Split a tab-separated string into fields, stripping trailing NUL bytes from
+-- each (version-agnostic: Lua 5.2+ does not treat %z as a NUL-byte pattern
+-- class, that was Lua 5.1/LuaJIT-only, so a plain byte scan is used instead of
+-- a gsub("%z+$", "") pattern). Also returns each field's own 0-based byte
+-- range within `s` (post-NUL-strip length) so the detail pane can highlight
+-- just that field's bytes instead of the whole record (see add_exec).
+local function split_with_offsets(s)
+  local fields, offsets = {}, {}
+  local start = 1
+  while true do
+    local sep = s:find("\t", start, true)
+    local e = sep and (sep - 1) or #s
+    local raw = s:sub(start, e)
+    local se = #raw
+    while se > 0 and raw:byte(se) == 0 do se = se - 1 end
+    fields[#fields + 1] = raw:sub(1, se)
+    offsets[#offsets + 1] = { off = start - 1, len = se }
+    if not sep then break end
+    start = sep + 1
+  end
+  return fields, offsets
 end
 
 -- The last 3 fields (trade_market, nxt_vi_upper, nxt_vi_lower) are NXT-only:
@@ -66,24 +80,16 @@ E.FIELD_NAMES_BASE_COUNT = 36
 -- Returns nil if field count isn't 36 or 39 (see above). Trailing NULs are
 -- stripped; issue_code -> (market, base). With 36 fields, the 3 NXT-only
 -- keys are simply absent from `rec` (nil), not empty strings.
+-- `rec.__offsets[name] = {off, len}` gives each field's own 0-based byte
+-- range within `body`, for the detail pane's per-field highlight.
 function E.decode(body)
-  local fields = {}
-  local start = 1
-  while true do
-    local sep = body:find("\t", start, true)
-    if sep then
-      fields[#fields + 1] = body:sub(start, sep - 1)
-      start = sep + 1
-    else
-      fields[#fields + 1] = body:sub(start)
-      break
-    end
-  end
+  local fields, offsets = split_with_offsets(body)
   if #fields ~= E.FIELD_NAMES_BASE_COUNT and #fields ~= #E.FIELD_NAMES then return nil end
 
-  local rec = {}
+  local rec = { __offsets = {} }
   for k = 1, #fields do
-    rec[E.FIELD_NAMES[k]] = rstrip_nul(fields[k])
+    rec[E.FIELD_NAMES[k]] = fields[k]
+    rec.__offsets[E.FIELD_NAMES[k]] = offsets[k]
   end
   rec.market, rec.issue_code = E.split_market(rec.issue_code)
   return rec
@@ -168,22 +174,27 @@ if _G.Proto then
       return false
     end
     local base = poff + r.off + 6   -- body start within tvb
-    sub:add(pf.market, tvb(base, r.len), rec.market)   -- shown right after length, before issue_code
+    local ic_off = rec.__offsets.issue_code
+    sub:add(pf.market, tvb(base + ic_off.off, ic_off.len), rec.market)   -- shown right after length, before issue_code
     for _, name in ipairs(E.FIELD_NAMES) do
       -- rec[name] is nil for the 3 NXT-only trailing fields on a 36-field
       -- (non-NXT-listed) record — must skip explicitly, not just check
       -- pf[name], or TreeItem:add() falls back to showing the raw tvbrange
       -- (the whole record body) under that field instead of omitting it.
-      if pf[name] and rec[name] then sub:add(pf[name], tvb(base, r.len), rec[name]) end
+      if pf[name] and rec[name] then
+        local o = rec.__offsets[name]
+        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      end
     end
-    local an = tonumber(rec.acc_volume);   if an then sub:add(pf.acc_volume_num, tvb(base, r.len), Int64(an)) end
-    local pn = tonumber(rec.price);        if pn then sub:add(pf.price_num, tvb(base, r.len), Int64(pn)) end
-    local tn = tonumber(rec.trade_volume); if tn then sub:add(pf.trade_volume_num, tvb(base, r.len), Int64(tn)) end
+    local av_off, pr_off, tv_off = rec.__offsets.acc_volume, rec.__offsets.price, rec.__offsets.trade_volume
+    local an = tonumber(rec.acc_volume);   if an then sub:add(pf.acc_volume_num, tvb(base + av_off.off, av_off.len), Int64(an)) end
+    local pn = tonumber(rec.price);        if pn then sub:add(pf.price_num, tvb(base + pr_off.off, pr_off.len), Int64(pn)) end
+    local tn = tonumber(rec.trade_volume); if tn then sub:add(pf.trade_volume_num, tvb(base + tv_off.off, tv_off.len), Int64(tn)) end
 
     local seq = pinfo.number * 1000 + msg_index
     local rev, prev_frame = reversal:eval(
       seq, pinfo.number, mas.stream_key(pinfo), rec.market, rec.issue_code, rec.acc_volume)
-    local ti = sub:add(pf.reversed, tvb(base, r.len), rev)
+    local ti = sub:add(pf.reversed, tvb(base + av_off.off, av_off.len), rev)
     if rev and prev_frame then ti:append_text(string.format(" (#%d)", prev_frame)) end
     return true
   end

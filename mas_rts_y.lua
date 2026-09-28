@@ -38,36 +38,42 @@ for _, c in ipairs(CATEGORY_CODES) do
   append({ "sell_qty_" .. c, "buy_qty_" .. (c + 100), "net_buy_qty_" .. (c + 200) })
 end
 
--- Strip trailing NUL bytes (see mas_rts_b for the version note).
-local function rstrip_nul(s)
-  local e = #s
-  while e > 0 and s:byte(e) == 0 do e = e - 1 end
-  return s:sub(1, e)
+-- Split a tab-separated string into fields, stripping trailing NUL bytes from
+-- each (see mas_rts_b for the version note). Also returns each field's own
+-- 0-based byte range within `s` (post-NUL-strip length) so the detail pane
+-- can highlight just that field's bytes instead of the whole record (see
+-- add_investor_qty).
+local function split_with_offsets(s)
+  local fields, offsets = {}, {}
+  local start = 1
+  while true do
+    local sep = s:find("\t", start, true)
+    local e = sep and (sep - 1) or #s
+    local raw = s:sub(start, e)
+    local se = #raw
+    while se > 0 and raw:byte(se) == 0 do se = se - 1 end
+    fields[#fields + 1] = raw:sub(1, se)
+    offsets[#offsets + 1] = { off = start - 1, len = se }
+    if not sep then break end
+    start = sep + 1
+  end
+  return fields, offsets
 end
 
 -- Split a tab-separated TYPE='Y' body into a record keyed by FIELD_NAMES.
 -- Returns nil if field count != 51. Trailing NULs are stripped. Unlike
 -- TYPE='B'/'C'/'F', `key` here is a market key (e.g. "0500000000"), not a
 -- stock issue code, so no market-prefix split is applied (see mas_rts_u.lua
--- for the same "key" convention).
+-- for the same "key" convention). `rec.__offsets[name] = {off, len}` gives
+-- each field's own byte range within `body`.
 function Y.decode(body)
-  local fields = {}
-  local start = 1
-  while true do
-    local sep = body:find("\t", start, true)
-    if sep then
-      fields[#fields + 1] = body:sub(start, sep - 1)
-      start = sep + 1
-    else
-      fields[#fields + 1] = body:sub(start)
-      break
-    end
-  end
+  local fields, offsets = split_with_offsets(body)
   if #fields ~= #Y.FIELD_NAMES then return nil end
 
-  local rec = {}
+  local rec = { __offsets = {} }
   for k = 1, #Y.FIELD_NAMES do
-    rec[Y.FIELD_NAMES[k]] = rstrip_nul(fields[k])
+    rec[Y.FIELD_NAMES[k]] = fields[k]
+    rec.__offsets[Y.FIELD_NAMES[k]] = offsets[k]
   end
   return rec
 end
@@ -110,7 +116,10 @@ if _G.Proto then
     end
     local base = poff + r.off + 6   -- body start within tvb
     for _, name in ipairs(Y.FIELD_NAMES) do
-      if pf[name] then sub:add(pf[name], tvb(base, r.len), rec[name]) end
+      if pf[name] then
+        local o = rec.__offsets[name]
+        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      end
     end
     return true
   end

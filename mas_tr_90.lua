@@ -17,11 +17,25 @@ local O = {}   -- module table: pure helpers (returned for tests)
 
 O.MSGK_ORDER = 0x90   -- UMP: the only MSGK this module decodes
 
--- Strip trailing NUL bytes (see mas_rts_b for the version note).
-local function rstrip_nul(s)
-  local e = #s
-  while e > 0 and s:byte(e) == 0 do e = e - 1 end
-  return s:sub(1, e)
+-- Split a tab-separated string into tokens, stripping trailing NUL bytes from
+-- each (see mas_rts_b for the version note). Also returns each token's own
+-- 0-based byte range within `s` (post-NUL-strip length), so the detail pane
+-- can highlight just that token's bytes (see add_order_body).
+local function split_with_offsets(s)
+  local toks, offsets = {}, {}
+  local start = 1
+  while true do
+    local sep = s:find("\t", start, true)
+    local e = sep and (sep - 1) or #s
+    local raw = s:sub(start, e)
+    local se = #raw
+    while se > 0 and raw:byte(se) == 0 do se = se - 1 end
+    toks[#toks + 1] = raw:sub(1, se)
+    offsets[#offsets + 1] = { off = start - 1, len = se }
+    if not sep then break end
+    start = sep + 1
+  end
+  return toks, offsets
 end
 
 -- Order code dictionary, in layout order: { code, english name }. The body is a
@@ -58,28 +72,32 @@ O.ORDER_FIELDS = {
 O.ORDER_NAMES = {}
 for _, f in ipairs(O.ORDER_FIELDS) do O.ORDER_NAMES[f[1]] = f[2] end
 
--- Decode an order-report TR-DATA body into an ordered list of { code, name, value }.
--- The body is a tab-separated, alternating code/value stream (each pair followed
--- by its own tab, so a trailing NUL/empty token after the last pair is normal and
--- ignored); codes are variable and self-describing. `name` is nil for a code
--- outside the dictionary.
-function O.decode_order(body)
-  local toks, start = {}, 1
-  while true do
-    local sep = body:find("\t", start, true)
-    if sep then
-      toks[#toks + 1] = body:sub(start, sep - 1)
-      start = sep + 1
-    else
-      toks[#toks + 1] = body:sub(start)
-      break
-    end
+-- Decode an order-report TR-DATA body into an ordered list of
+-- { code, name, value, code_off, value_off }. The body is a tab-separated,
+-- alternating code/value stream (each pair followed by its own tab, so a
+-- trailing NUL/empty token after the last pair is normal and ignored); codes
+-- are variable and self-describing. `name` is nil for a code outside the
+-- dictionary.
+--
+-- `body` is the (possibly EUC-KR->UTF-8 transcoded, see add_order_body) text
+-- used for VALUES. `raw_body`, if given, is the untranscoded wire bytes, used
+-- only to compute `code_off`/`value_off` (each token's byte range within the
+-- tvb) for the detail pane's per-field highlight — tab (0x09) never occurs
+-- inside a multibyte EUC-KR/UTF-8 sequence, so both splits have the same
+-- token count/order, but the transcoded text's own byte offsets don't match
+-- the tvb's raw bytes once a multibyte value changes length (same reasoning
+-- as mas_rts_f.lua's F.decode).
+function O.decode_order(body, raw_body)
+  local toks, offsets = split_with_offsets(body)
+  if raw_body then
+    local raw_toks, raw_offsets = split_with_offsets(raw_body)
+    if #raw_toks == #toks then offsets = raw_offsets end
   end
   local rec = {}
   for k = 1, #toks - 1, 2 do
     local code = toks[k]
-    rec[#rec + 1] = { code = code, name = O.ORDER_NAMES[code],
-                      value = rstrip_nul(toks[k + 1]) }
+    rec[#rec + 1] = { code = code, name = O.ORDER_NAMES[code], value = toks[k + 1],
+                      code_off = offsets[k], value_off = offsets[k + 1] }
   end
   return rec
 end
@@ -111,13 +129,16 @@ if _G.Proto then
   -- mas_tr.lua's generic Transaction dispatcher.
   local function add_order_body(sub, tvb, poff, plen, pinfo)
     local doff, dlen = poff + 24, plen - 24
+    local raw = (dlen > 0) and tvb(doff, dlen):raw() or ""
     local utf8 = (dlen > 0) and tvb(doff, dlen):string(ENC_EUC_KR) or ""
-    for _, p in ipairs(O.decode_order(utf8)) do
+    for _, p in ipairs(O.decode_order(utf8, raw)) do
       local f = pf[p.code]
       if f then
-        sub:add(f, tvb(poff, plen), p.value)
+        local o = p.value_off
+        sub:add(f, tvb(doff + o.off, o.len), p.value)
       else
-        sub:add(pf.unknown, tvb(poff, plen), p.code .. "=" .. p.value)
+        local co, vo = p.code_off, p.value_off
+        sub:add(pf.unknown, tvb(doff + co.off, (vo.off + vo.len) - co.off), p.code .. "=" .. p.value)
       end
     end
   end

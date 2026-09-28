@@ -46,11 +46,24 @@ LM.FIELD_NAMES = {
   "change_sign", "key3",
 }
 
--- Strip trailing NUL bytes (see mas_rts_b for the version note).
-local function rstrip_nul(s)
-  local e = #s
-  while e > 0 and s:byte(e) == 0 do e = e - 1 end
-  return s:sub(1, e)
+-- Split a tab-separated string into fields, stripping trailing NUL bytes from
+-- each (see mas_rts_b for the version note). Also returns each field's own
+-- 0-based byte range within `s` (post-NUL-strip length).
+local function split_with_offsets(s)
+  local fields, offsets = {}, {}
+  local start = 1
+  while true do
+    local sep = s:find("\t", start, true)
+    local e = sep and (sep - 1) or #s
+    local raw = s:sub(start, e)
+    local se = #raw
+    while se > 0 and raw:byte(se) == 0 do se = se - 1 end
+    fields[#fields + 1] = raw:sub(1, se)
+    offsets[#offsets + 1] = { off = start - 1, len = se }
+    if not sep then break end
+    start = sep + 1
+  end
+  return fields, offsets
 end
 
 -- Split a tab-separated TYPE='m' body into a record keyed by FIELD_NAMES.
@@ -58,24 +71,30 @@ end
 -- expected to already be UTF-8 (see add_news below) — encoding doesn't
 -- affect the split since tab (0x09) never occurs inside a multibyte
 -- sequence in either EUC-KR or UTF-8.
-function LM.decode(body)
-  local fields = {}
-  local start = 1
-  while true do
-    local sep = body:find("\t", start, true)
-    if sep then
-      fields[#fields + 1] = body:sub(start, sep - 1)
-      start = sep + 1
-    else
-      fields[#fields + 1] = body:sub(start)
-      break
-    end
-  end
+--
+-- `raw_body`, if given, is the untranscoded wire bytes, used only to compute
+-- `rec.__offsets[name] = {off, len}` (each field's byte range within the
+-- tvb) for the detail pane's per-field highlight — the transcoded `body`'s
+-- own byte offsets don't match the tvb's raw bytes once a multibyte field
+-- changes length, hence the separate raw_body split (see mas_rts_f.lua's
+-- F.decode for the same reasoning).
+function LM.decode(body, raw_body)
+  local fields, offsets = split_with_offsets(body)
   if #fields ~= #LM.FIELD_NAMES then return nil end
 
-  local rec = {}
+  local rec = { __offsets = {} }
   for k = 1, #LM.FIELD_NAMES do
-    rec[LM.FIELD_NAMES[k]] = rstrip_nul(fields[k])
+    rec[LM.FIELD_NAMES[k]] = fields[k]
+    rec.__offsets[LM.FIELD_NAMES[k]] = offsets[k]
+  end
+
+  if raw_body then
+    local raw_fields, raw_offsets = split_with_offsets(raw_body)
+    if #raw_fields == #LM.FIELD_NAMES then
+      for k = 1, #LM.FIELD_NAMES do
+        rec.__offsets[LM.FIELD_NAMES[k]] = raw_offsets[k]
+      end
+    end
   end
   return rec
 end
@@ -115,8 +134,9 @@ if _G.Proto then
   -- correct). (Requires a Wireshark build with EUC-KR string support.)
   local function add_news(tree, tvb, poff, r, pinfo, msg_index)
     local base = poff + r.off + 6   -- body start within tvb
+    local raw = (r.len > 0) and tvb(base, r.len):raw() or ""
     local utf8 = (r.len > 0) and tvb(base, r.len):string(ENC_EUC_KR) or ""
-    local rec = LM.decode(utf8)
+    local rec = LM.decode(utf8, raw)
     local sub = tree:add(mas.proto, tvb(poff + r.off, 6 + r.len),
       "type: " .. LM.TYPE_NEWS .. " (" .. r.len .. " bytes)")
     mas.rts_add_header(sub, tvb, poff, r)
@@ -125,7 +145,10 @@ if _G.Proto then
       return false
     end
     for _, name in ipairs(LM.FIELD_NAMES) do
-      if pf[name] then sub:add(pf[name], tvb(base, r.len), rec[name]) end
+      if pf[name] then
+        local o = rec.__offsets[name]
+        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      end
     end
     return true
   end
