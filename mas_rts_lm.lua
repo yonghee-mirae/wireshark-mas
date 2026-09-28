@@ -38,6 +38,16 @@ local LM = {}   -- module table: pure helpers (returned for tests)
 
 LM.TYPE_NEWS = "m"   -- the only RTS TYPE this module decodes (lowercase)
 
+-- 전일대비구분 code -> Korean meaning (same 1..5 dictionary as
+-- mas_rts_ls.lua's S.CHANGE_LABEL, for the shared 코드 필드 convention in
+-- design/field_spec.md — duplicated locally rather than shared cross-file,
+-- matching this project's existing per-file duplication convention). Real
+-- captures (37 records, tcp_capture.cap + GlobalPart_RTS.pcapng) show
+-- change_sign values "0"/"2"/"3"/"5" — "2"/"3"/"5" match 상승/보합/하락
+-- exactly; "0" isn't in the 1..5 dictionary (presumably "해당 없음" for a
+-- news item with no attached price, unconfirmed) and is left unlabeled.
+LM.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
+
 -- Field order (0-based index 0..15), for RTS TYPE='m' (Market Commentary).
 LM.FIELD_NAMES = {
   "key", "sep",
@@ -147,7 +157,12 @@ if _G.Proto then
     for _, name in ipairs(LM.FIELD_NAMES) do
       if pf[name] then
         local o = rec.__offsets[name]
-        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+        local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+        if name == "change_sign" then
+          -- 코드 필드(design/field_spec.md): "값(의미)", e.g. "2 (상승)".
+          local label = LM.CHANGE_LABEL[rec[name]]
+          if label then ti:append_text(" (" .. label .. ")") end
+        end
       end
     end
     return true

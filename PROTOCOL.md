@@ -3,14 +3,15 @@
 이 문서는 `mas.lua` / `mas_rts.lua` / `mas_tr.lua` / `mas_rts_b.lua` /
 `mas_rts_c.lua` / `mas_rts_u.lua` / `mas_rts_v.lua` / `mas_rts_j.lua` /
 `mas_rts_x.lua` / `mas_rts_f.lua` / `mas_rts_y.lua` / `mas_rts_z.lua` /
-`mas_rts_lm.lua` / `mas_rts_ls.lua` / `mas_tr_90.lua`가 해석하는 와이어
-프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한 것이다(파일 구조는
-§6 참고). 근거는 `design/AXIS-4.1.0_Protocol_WTS_ADD.docx`(원 설계 문서),
-`inner/wireshark 추가.txt`/`inner/Execution_layout.txt`/
-`inner/Order_layout.txt`/`protocols/해외.txt`(추가 필드 스펙)와 `samples/`
-아래 실제 캡처 4종(`20260915_0809_RTS.pcapng`, `20260915_0809_RTS2.pcapng`,
-`20260921_nana.pcapng`, `tcp_capture.cap`)을 바이트 단위로 교차 검증한
-결과다.
+`mas_rts_lm.lua` / `mas_rts_ls.lua` / `mas_rts_lq.lua` / `mas_tr_90.lua`가
+해석하는 와이어 프로토콜을 이후 확장·수정 시 참고할 수 있도록 정리한
+것이다(파일 구조는 §6 참고). 근거는
+`design/AXIS-4.1.0_Protocol_WTS_ADD.docx`(원 설계 문서), `inner/wireshark
+추가.txt`/`inner/Execution_layout.txt`/`inner/Order_layout.txt`/
+`protocols/해외.txt`(추가 필드 스펙)와 `samples/` 아래 실제 캡처 5종
+(`20260915_0809_RTS.pcapng`, `20260915_0809_RTS2.pcapng`,
+`20260921_nana.pcapng`, `tcp_capture.cap`, `GlobalPart_RTS.pcapng`)을 바이트
+단위로 교차 검증한 결과다.
 
 ## 1. 전체 구조 (3계층)
 
@@ -89,7 +90,7 @@ KIND(1)  DUMY(1)  TYPE(1)  LENGTH(3, ASCII 숫자)  RTS-DATA(LENGTH bytes, 끝�
   값과 무관 — 우연히 TYPE이 구현된 값과 같아도 그 디코더로 넘어가지 않음).
 - **DUMY**: 예비 (관측된 값은 항상 `'0'`).
 - **TYPE**: 레코드 종류를 정하는 1글자. 실캡처에서 관측된 값:
-  `B, C, D, U, Y, Z, c, m, y, V, F, J, s, ?`(0x3F).
+  `B, C, D, U, Y, Z, c, m, y, V, F, J, s, q, r, R, ?`(0x3F).
 - **LENGTH(3)**: RTS-DATA 길이, 최대 512.
 
 공용 규칙(모든 TYPE에 적용, §7 참고): 서브트리는 항상 우산 proto `mas`로만
@@ -115,7 +116,8 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | `Z` | 투자자AMT | 51 | `mas_rts_z.lua` | 높음 — 138건 전건 일치 |
 | `m`(소문자) | 시황제목/통합뉴스 | 16 | `mas_rts_lm.lua` | 높음 — 75건 전건 일치 |
 | `s`(소문자) | 해외주식 체결 | 41 | `mas_rts_ls.lua` | 중간 — 11건(§3.11), 항등식 전건 일치 — 관측된 코드가 전부 `2`(상승)라 하락/보합/상한/하한은 스펙 예시로만 검증 |
-| `D`, 소문자 `c`/`y`, `?`(0x3F) | — | — | 미구현 | §7 참고 |
+| `q`(소문자) | 해외주식 호가 | 72 | `mas_rts_lq.lua` | 높음 — 42건(§3.12), 잔량 합계 항등식 전건 일치(잔량변화 합계는 상위 10단계 밖 변동으로 39/42, 35/42) |
+| `D`, 소문자 `c`/`y`, `?`(0x3F), `r`(=`e`), `R` | — | — | 미구현 | §7 참고 |
 
 ### 3.1 TYPE='B' 필드 레이아웃 (`inner/Execution_layout.txt`)
 
@@ -327,6 +329,15 @@ key3`(스펙: `inner/wireshark 추가.txt`).
   EUC-KR이라, `mas_tr_90.lua`(주문결과)·`mas_rts_f.lua`(거래원)와 동일하게
   바디 전체를 EUC-KR→UTF-8로 변환한 뒤 tab-분리한다(탭 0x09는 멀티바이트
   시퀀스 안에 나타나지 않아 분리 결과가 그대로 맞다).
+- **`change_sign`(대비기호, 024)는 코드 필드다**: `design/field_spec.md`가
+  정의한 149/742/752 계열과 같은 1=상한/2=상승/3=보합/4=하한/5=하락
+  코드다(`LM.CHANGE_LABEL`, `mas_rts_ls.lua`의 `S.CHANGE_LABEL`과 같은
+  표를 로컬로 복제 — 파일 간 핵심 디코드 로직을 공유하지 않는 기존
+  관례). 실캡처 37건(`tcp_capture.cap` + `GlobalPart_RTS.pcapng`)에서
+  `"0"/"2"/"3"/"5"`가 관측됐고 `2`/`3`/`5`는 상승/보합/하락과 정확히
+  일치 — `"0"`은 1..5 사전에 없어 라벨 없이 원본만 표시한다(뉴스에 종목
+  가격이 안 붙은 경우로 추정, 미확인). 상세창 표시는 `s`의 코드 필드와
+  동일한 `값(의미)` 형태(예: `"2 (상승)"`).
 - 필드: `mas.rts.m.<field>`(16필드 중 `sep` 제외).
 - Statistics 창: 없음(요청 범위 밖).
 
@@ -391,6 +402,44 @@ chart_skip_gubun
   컨벤션과 동일).
 - 필드: `mas.rts.s.<field>`(41필드 전부), `mas.rts.s.change_num`,
   `mas.rts.s.regular_change_num`, `mas.rts.s.day_regular_diff_num`.
+- Statistics 창: 없음(요청 범위 밖).
+
+### 3.12 TYPE='q'(소문자) 필드 레이아웃 — 해외주식 호가 (`mas_rts_lq.lua`, `protocols/해외.txt`)
+
+- 파일명이 `mas_rts_lq.lua`("lower q")인 이유는 §8의 소문자 TYPE 네이밍
+  규칙 참고(`mas_rts_lm.lua`/`mas_rts_ls.lua`와 동일한 이유). 등록 키
+  (`mas.by_rts_type["q"]`), 라벨(`"type: q"`), Wireshark 필터(`mas.rts.q.*`)는
+  파일명과 무관하게 실제 와이어 바이트 그대로 소문자 `q`이다.
+
+탭 구분 72필드(`key` + 스펙 71필드), `Q.FIELD_NAMES`(코드 순서 그대로):
+
+```
+key type_echo realtime_gubun price_decimal_places business_date
+data_date_kr data_time_kr base_price
+ask_price1..10 bid_price1..10
+ask_qty1..10 bid_qty1..10
+ask_qty_chg1..10 bid_qty_chg1..10
+total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
+```
+
+- `ask_qty_chg`/`bid_qty_chg`(스펙 코드 211-230)는 원래 스펙 문서에
+  "매도/매수호가건수"로 잘못 적혀 있었으나, 실측에서 음수 값이 나오는 걸
+  보고 스펙을 "매도/매수호가잔량변화"로 정정했다(사용자 확인, 2026-09-28)
+  — 해당 호가단계 잔량의 변화분(delta)이라 감소 시 음수가 정상이다.
+  `mas_rts_c.lua`의 `ask_qty_chg`/`bid_qty_chg` 네이밍을 그대로 재사용.
+- `samples/GlobalPart_RTS.pcapng`(포트 15201 스트림, pcapng라 이 세션에서
+  직접 Ethernet/IPv4/TCP를 재조립해 추출 — tshark/scapy/dpkt 전부 미설치)의
+  실캡처 42건(종목 1종 `DTSLA`)으로 검증: `total_ask_qty ==
+  Σask_qty1..10`, `total_bid_qty == Σbid_qty1..10`이 **42/42 전건 일치**.
+  `total_ask_qty_chg`/`total_bid_qty_chg`는 각각 39/42, 35/42만 합이
+  맞는데, 잔량변화 배열이 상위 10단계까지만 보여줘서 11단계 밖 변동이
+  총계엔 반영되고 배열엔 안 보이는 것으로 설명 가능(필드 매핑 문제
+  아님) — `가격/잔량` 항등식이 100% 맞는 게 그 근거.
+- 바디 끝에 잉여 tab 없음(`s`와 달리 NUL로 바로 끝남).
+- `key`(종목 심볼, 예: `"DTSLA"`)와 `type_echo`(000, 관측값 항상 `"q"`)는
+  스펙 필드 목록에는 없지만 실측 바디에 존재해 `FIELD_NAMES`에 포함했다
+  (`mas_rts_ls.lua`/`mas_rts_v.lua`의 `key` 컨벤션과 동일).
+- 필드: `mas.rts.q.<field>`(72필드 전부).
 - Statistics 창: 없음(요청 범위 밖).
 
 ## 4. Layer 2/3 — Transaction (SESS=0x01)
@@ -656,7 +705,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 
 ### 6.6 필드별 byte 하이라이트: `rec.__offsets[name] = {off, len}`
 
-**모든 TYPE 디코더**(`mas_rts_b/c/u/v/j/x/f/y/z/lm/s.lua`, RTS)와
+**모든 TYPE 디코더**(`mas_rts_b/c/u/v/j/x/f/y/z/lm/ls/lq.lua`, RTS)와
 **`mas_tr_90.lua`(Transaction MSGK=0x90)**의 `decode()`는 tab-분리 시 각
 필드/코드-값 쌍의 원본 문자열 값뿐 아니라, body 안에서 그 필드가 차지하는
 0-based 바이트 범위(`{off, len}`, trailing NUL 제외 후 길이)도 함께
@@ -705,6 +754,8 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | RTS TYPE 소문자 `c` | 대문자 C와 별개 TYPE | 스펙 없음 |
 | RTS TYPE 소문자 `y` | 대문자 Y와 별개 TYPE | 스펙 없음 |
 | RTS TYPE `?`(0x3F) | 항상 14B, `ATM` 레코드(`issue_code\tsep\t값`) | 신규 발견, 스펙 없음, 용도 미상 |
+| RTS TYPE `r`(=`e`, 해외선물옵션 체결) | 15필드, `GlobalPart_RTS.pcapng`에 실캡처 340건(`r`만 관측, `e`는 0건) | 스펙은 있으나 `033(등락율)`이 `"--0.93"`처럼 부호 있는 실수로 파싱 안 되는 값이 실측에 있어 보류(원인 미상) |
+| RTS TYPE `R`(해외선물옵션 호가) | `GlobalPart_RTS.pcapng`에 실캡처 274건 | 스펙은 있으나 아직 분석 안 함 |
 | RTS KIND `I` | RTS-Symbol 리스트 | KIND='D'와 레이아웃이 다를 수 있어 TYPE 디스패치 자체를 안 탐(설계 결정) |
 | Transaction MSGK `0x20`/`0x50`/`0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | §5 참고 | 요청 범위 밖(주문체결·체결시세만 지원) |
 | Transaction MSGK `0x14` | `mas.MSGK_NAMES` 사전에도 없음 | 암호화 추정, 미확인 |
@@ -754,6 +805,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | `mas_rts_z.lua` | 3 (RTS TYPE='Z') | 투자자AMT 디코드, `mas.rts.Z.*` 필드. `mas.by_rts_type["Z"]`에 등록 (§3.9) |
 | `mas_rts_lm.lua` | 3 (RTS TYPE='m', 소문자) | 시황제목/통합뉴스 디코드, `mas.rts.m.*` 필드. `mas.by_rts_type["m"]`에 등록 (§3.10, 파일명은 "lower m") |
 | `mas_rts_ls.lua` | 3 (RTS TYPE='s', 소문자) | 해외주식 체결 디코드, `mas.rts.s.*` 필드. `mas.by_rts_type["s"]`에 등록 (§3.11, 파일명은 "lower s") |
+| `mas_rts_lq.lua` | 3 (RTS TYPE='q', 소문자) | 해외주식 호가 디코드, `mas.rts.q.*` 필드. `mas.by_rts_type["q"]`에 등록 (§3.12, 파일명은 "lower q") |
 | `mas_tr_90.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.tr.90.*` 필드, MAS/UMP 창. `mas.by_msgk[0x90]`에 등록 |
 
 - 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
@@ -792,9 +844,10 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
   실제 와이어 바이트 그대로다(Wireshark 필드명은 대소문자를 구분하므로
   `mas.rts.m`과 미래의 `mas.rts.M`은 애초에 서로 다른 필터라 필터
   레벨에서는 이 규칙이 필요 없다). 같은 이유로 TYPE='s'는 `mas_rts_ls.lua`
-  ("lower s", §3.11)로 지었다. 소문자 `c`/`y`를 구현하게 되면
-  `mas_rts_lc.lua`/`mas_rts_ly.lua`로 지을 것.
-- 배포 시 **파일 열다섯 개**(위 표 전부) 모두 플러그인 디렉터리에
+  ("lower s", §3.11), TYPE='q'는 `mas_rts_lq.lua`("lower q", §3.12)로
+  지었다. 소문자 `c`/`y`를 구현하게 되면 `mas_rts_lc.lua`/`mas_rts_ly.lua`로
+  지을 것.
+- 배포 시 **파일 열여섯 개**(위 표 전부) 모두 플러그인 디렉터리에
   복사해야 한다. 2계층 파일이 없으면 해당 SESS 전체가 raw data로만
   보이고, 3계층 파일이 없으면 그 TYPE/MSGK는 라벨(`type:`/`msgk:`)까지는
   그대로 나오지만 고유 필드 없이 raw data로만 보인다(§6.5).
