@@ -28,6 +28,9 @@
 --   why lowercase 'r'/'e' had to take mas_rts_lre.lua instead),
 --   mas_rts_lu.lua (RTS TYPE='u', lowercase — 해외주식 체결(After Market),
 --   "lower u" to avoid colliding with mas_rts_u.lua's TYPE='U'),
+--   mas_rts_d.lua ('D'), mas_rts_lc.lua ('c'), mas_rts_k.lua ('K'),
+--   mas_rts_ly.lua ('y'), mas_rts_s.lua ('S'), mas_rts_7.lua ('7'),
+--   mas_rts_8.lua ('8'),
 --   mas_tr_90.lua (Transaction MSGK=0x90). A new message type
 --   decoder is added the same way: its own file, registering into
 --   mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
@@ -36,7 +39,9 @@
 -- mas_tr.lua, mas_rts_b.lua, mas_rts_c.lua,
 -- mas_rts_u.lua, mas_rts_v.lua, mas_rts_j.lua, mas_rts_x.lua, mas_rts_f.lua,
 -- mas_rts_y.lua, mas_rts_z.lua, mas_rts_lm.lua, mas_rts_ls.lua, mas_rts_lq.lua,
--- mas_rts_lre.lua, mas_rts_r.lua, mas_rts_lu.lua, mas_tr_90.lua. They coordinate through the
+-- mas_rts_lre.lua, mas_rts_r.lua, mas_rts_lu.lua, mas_rts_d.lua,
+-- mas_rts_lc.lua, mas_rts_k.lua, mas_rts_ly.lua, mas_rts_s.lua, mas_rts_7.lua,
+-- mas_rts_8.lua, mas_tr_90.lua. They coordinate through the
 -- shared global `_G.mas`; each layer-2 module registers itself by SESS value
 -- (mas.by_sess), each layer-3 module registers itself by TYPE/MSGK
 -- (mas.by_rts_type / mas.by_msgk). Only the decoded message types are fully

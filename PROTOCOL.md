@@ -120,8 +120,22 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | `q`(소문자) | 해외주식 호가 | 72 | `mas_rts_lq.lua` | 높음 — 42건(§3.12), 잔량 합계 항등식 전건 일치(잔량변화 합계는 상위 10단계 밖 변동으로 39/42, 35/42) |
 | `r`(소문자, =`e`) | 해외선물옵션 체결 | 15 | `mas_rts_lre.lua` | 중간 — `r` 340건(§3.13) 전건 일치; `e`는 스펙상 같은 레이아웃이나 실캡처 0건(미검증) |
 | `R`(대문자) | 해외선물옵션 호가 | 39 | `mas_rts_r.lua` | 높음 — 274건(§3.14) 전건 일치, 부분 불일치 0건 |
+| `mas_rts_d.lua` | 3 (RTS TYPE='D') | 주식:호가잔량 디코드, `mas.rts.D.*` 필드. `mas.by_rts_type["D"]`에 등록 (§3.16) |
+| `mas_rts_lc.lua` | 3 (RTS TYPE='c') | 통합시세 11~20 호가 디코드, `mas.rts.c.*` 필드. `mas.by_rts_type["c"]`에 등록 (§3.17) |
+| `mas_rts_k.lua` | 3 (RTS TYPE='K') | 선물:체결 디코드, `mas.rts.K.*` 필드. `mas.by_rts_type["K"]`에 등록 (§3.18) |
+| `mas_rts_ly.lua` | 3 (RTS TYPE='y') | DRFN종목검색 디코드, `mas.rts.y.*` 필드. `mas.by_rts_type["y"]`에 등록 (§3.19) |
+| `mas_rts_s.lua` | 3 (RTS TYPE='S') | 선물:투자자별순매수 디코드, `mas.rts.S.*` 필드. `mas.by_rts_type["S"]`에 등록 (§3.20) |
+| `mas_rts_7.lua` | 3 (RTS TYPE='7') | 프리/애프터마켓 시장현황 디코드, `mas.rts.7.*` 필드. `mas.by_rts_type["7"]`에 등록 (§3.21) |
+| `mas_rts_8.lua` | 3 (RTS TYPE='8') | 52주 고가/저가 디코드, `mas.rts.8.*` 필드. `mas.by_rts_type["8"]`에 등록 (§3.22) |
 | `u`(소문자) | 해외주식 체결(After Market) | 31 | `mas_rts_lu.lua` | 중간 — 73건(§3.15, `GlobalStock_type_u.pcap`), 항등식 전건 일치 — 관측된 코드가 전부 `2`(상승)이고 종목이 NVDA 하나뿐 |
-| `D`, 소문자 `c`/`y`, `?`(0x3F) | — | — | 미구현 | §7 참고 |
+| `D` | 주식:호가잔량 | 80 | `mas_rts_d.lua` | 높음 — 1,142건(§3.16) 필드 수 전건 일치, `total_ask_qty == Σask_qty1..10` 전건 일치 |
+| `c`(소문자) | 통합시세 11~20 호가 | 102 | `mas_rts_lc.lua` | 낮음 — 280건(§3.17) 필드 수 일치하나 값이 전부 0 |
+| `K` | 선물:체결 | 37 | `mas_rts_k.lua` | 중간 — 88건(§3.18), `tcp_capture.cap` |
+| `y`(소문자) | DRFN종목검색 | 54 | `mas_rts_ly.lua` | 중간 — 11건(§3.19), 스펙 외 필드 1개(`extra`) |
+| `S` | 선물:투자자별순매수 | 5 | `mas_rts_s.lua` | 중간 — 8건(§3.20) |
+| `7` | 프리/애프터마켓 시장현황 | 13 | `mas_rts_7.lua` | 중간 — 5건(§3.21) |
+| `8` | 52주 고가/저가 | 6 | `mas_rts_8.lua` | 중간 — 3건(§3.22) |
+| 그 외 스펙 TYPE(샘플 없음), `?`(0x3F) | — | — | 미구현 | §7 참고 |
 
 ### 3.1 TYPE='B' 필드 레이아웃 (`design/field_spec.md`)
 
@@ -565,6 +579,48 @@ total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
   부호는 `+` 매수 체결/`-` 매도 체결/공백 미정의이며, 전 건 `-`(매도 체결)로
   관측됐다. 부호는 해석 없이 원본 그대로 표시한다.
 
+### 3.16 TYPE='D' 필드 레이아웃 — 주식:호가잔량 (`mas_rts_d.lua`, `design/field_spec.md`)
+
+- 탭 구분 80필드: `key`(`N.A005930` 형태, 접두어 `M`/`N` = 거래소, 접두어 없음 = KRX —
+  C와 같은 규칙, 파생 필드 `mas.rts.D.market`/"거래소") + 마커(000) + 스펙 78필드.
+  필드 배치는 C의 10단계 호가(가/량/비)와 같으나 KRX/NXT 분할 사다리가 없고 중간가(920~923)가 있다.
+- `*_qty_chg`(스펙명 매도비/매수비)는 C와 같은 수량 변화(부호 있음)로 보고 같은 내부명을 썼다.
+- 검증: 1,142건 전건 78필드, `total_ask_qty == Σask_qty1..10` 전건 일치.
+  가격의 선행 부호(`+`/`-`/공백)는 해석 없이 원본 표시.
+
+### 3.17 TYPE='c'(소문자) 필드 레이아웃 — 통합시세 11~20 호가 (`mas_rts_lc.lua`)
+
+- 102필드: `key`(`M.A005930`, 시장 접두어 처리는 D와 동일) + 마커 + 스펙 100필드
+  (매도/매수 × 가·량·비·KRX량·NXT량, 11~20단계).
+- 샘플 280건은 전부 값이 0이라 필드 순서는 스펙에만 의존한다(항등식 미검증).
+
+### 3.18 TYPE='K' 필드 레이아웃 — 선물:체결 (`mas_rts_k.lua`)
+
+- 37필드: `key`(선물 코드, 예 `A016C000`) + 마커 + 스펙 35필드. 시장 접두어 없음.
+- 마지막 두 필드(415/416 상한가/하한가단계폭)는 값이 EUC-KR 문자열(`실`)이라
+  `add`에서 EUC-KR→UTF-8 변환 후 split한다(§ `mas_rts_lm.lua`와 같은 방식).
+- 부호 필드(`+`/`-`/공백)는 원본 표시. 88건 전건 필드 수 일치.
+
+### 3.19 TYPE='y'(소문자) 필드 레이아웃 — DRFN종목검색 (`mas_rts_ly.lua`)
+
+- 54필드: `key`(`DRFNSr0048` 형태) + 마커 + 스펙 51필드 + **스펙에 없는 마지막 필드 1개**
+  (`extra`, 의미 미상 — 라벨/필터 모두 `extra`). 바디 끝에 잉여 tab + NUL이 있어 decode에서 제거.
+- HEAD_2(601)·종목명(022)은 EUC-KR이라 K와 같이 변환한다. 11건 전건 일치.
+- 대문자 `Y`(투자자QTY)와 별개 TYPE이다.
+
+### 3.20 TYPE='S' 필드 레이아웃 — 선물:투자자별순매수 (`mas_rts_s.lua`)
+
+- 5필드: `key` + 마커 + 투자자구분(261)/계약수(262)/계약금(263).
+  스펙의 (260)종목코드는 별도 필드가 아니라 와이어의 선행 `key`다. 8건 전건 일치.
+
+### 3.21 TYPE='7' 필드 레이아웃 — 프리/애프터마켓 시장현황 (`mas_rts_7.lua`)
+
+- 13필드: `key`(예 `NXTMCAP`) + 마커 + 스펙 11필드. 5건 전건 일치. 등락율/전장대비율은 부호 원본 표시.
+
+### 3.22 TYPE='8' 필드 레이아웃 — 52주 고가/저가 (`mas_rts_8.lua`)
+
+- 6필드: `key`(종목코드) + 마커 + 스펙 4필드. 3건 전건 일치.
+
 ## 4. Layer 2/3 — Transaction (SESS=0x01)
 
 프레이밍은 `mas_tr.lua`가 담당한다. Transaction payload는
@@ -897,9 +953,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 |---|---|---|
 | RTS 압축 | CHCK bit `0x02`(LZO) | 압축 해제 로직 자체가 없어 내부 TYPE 전혀 알 수 없음(구현 보류 결정, 아래 참고) |
 | Transaction 암호화 | ACTF bit `0x02`(Xecure/XecureMobile) | 키 없음 |
-| RTS TYPE `D` | 80필드 추정 | 스펙 없음 |
-| RTS TYPE 소문자 `c` | 대문자 C와 별개 TYPE | 스펙 없음 |
-| RTS TYPE 소문자 `y` | 대문자 Y와 별개 TYPE | 스펙 없음 |
+| RTS TYPE(스펙만 있고 샘플·구현 없음) | `A G H I L M N O P Q T W g h i j k l n o p t v w x z 3 4 5 6 9` | 샘플 확보 후 구현 |
 | RTS TYPE `?`(0x3F) | 항상 14B, `ATM` 레코드(`issue_code\tsep\t값`) | 신규 발견, 스펙 없음, 용도 미상 |
 | RTS KIND `I` | RTS-Symbol 리스트 | KIND='D'와 레이아웃이 다를 수 있어 TYPE 디스패치 자체를 안 탐(설계 결정) |
 | Transaction MSGK `0x20`/`0x50`/`0x5f`/`0x80`/`0x81`/`0x91`/`0x92` | §5 참고 | 요청 범위 밖(주문체결·체결시세만 지원) |
@@ -993,7 +1047,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
   `mas.rts.m`과 미래의 `mas.rts.M`은 애초에 서로 다른 필터라 필터
   레벨에서는 이 규칙이 필요 없다). 같은 이유로 TYPE='s'는 `mas_rts_ls.lua`
   ("lower s", §3.11), TYPE='q'는 `mas_rts_lq.lua`("lower q", §3.12)로
-  지었다. 소문자 `c`/`y`를 구현하게 되면 `mas_rts_lc.lua`/`mas_rts_ly.lua`로
+  지었다. 소문자 `c`/`y`는 `mas_rts_lc.lua`/`mas_rts_ly.lua`로
   지을 것. TYPE='r'/'e'는 둘 다 이미 소문자에 레이아웃도 동일해
   `mas_rts_lre.lua`("lower r/e")로 합쳐 지었다(§3.13) — 대문자 TYPE='R'
   (해외선물옵션 호가)이 plain 이름 `mas_rts_r.lua`를 먼저 차지했기
