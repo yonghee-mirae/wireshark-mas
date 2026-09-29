@@ -647,7 +647,7 @@ total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
    없으면 유지해도 무해(ASCII 무영향)하며, 다른 미변환 type과 통일할지는 그때 결정. 반대로 **변환이
    없는 기존 type(`B C D J R U V X Y Z c q r/e s u S 7 8`)에서 한글이 나오면 변환을 추가해야 한다**
    (`decode(body, raw_body)`로 원본 바이트 오프셋 분리, `mas_rts_lm.lua`/`mas_rts_k.lua` 참고).
-4. **코드 정리:** 내부명 `f<코드>` → 영문 의미명(`FIELD_NAMES`와 `FIELD_SPEC` 키를 함께 변경),
+4. **코드 정리:** 내부명 `f<코드>`는 유지(스펙·필터·코드 1:1 대응, 영문 의미명으로 바꾸지 않음).
    파일 머리 `UNVERIFIED` 주석을 검증 결과(샘플 파일·건수·항등식)로 교체.
 5. **문서:** 이 절과 현황표 "미검증 31종" 행에서 해당 type 제거 후 개별 절·신뢰도 행 추가, §8 표와
    `mas.lua` 주석의 "31" 개수 갱신.
