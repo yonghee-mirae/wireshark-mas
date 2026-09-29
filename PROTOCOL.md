@@ -120,7 +120,7 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | `q`(소문자) | 해외주식 호가 | 72 | `mas_rts_lq.lua` | 높음 — 42건(§3.12), 잔량 합계 항등식 전건 일치(잔량변화 합계는 상위 10단계 밖 변동으로 39/42, 35/42) |
 | `r`(소문자, =`e`) | 해외선물옵션 체결 | 15 | `mas_rts_lre.lua` | 중간 — `r` 340건(§3.13) 전건 일치; `e`는 스펙상 같은 레이아웃이나 실캡처 0건(미검증) |
 | `R`(대문자) | 해외선물옵션 호가 | 39 | `mas_rts_r.lua` | 높음 — 274건(§3.14) 전건 일치, 부분 불일치 0건 |
-| `mas_rts_<t>.lua` × 35 | 3 (RTS TYPE 스펙만 있는 35종) | `mas_rts_a.lua`, `mas_rts_g.lua`, `mas_rts_h.lua`, `mas_rts_i.lua`, `mas_rts_l.lua`, `mas_rts_m.lua`, `mas_rts_n.lua`, `mas_rts_o.lua`, `mas_rts_p.lua`, `mas_rts_q.lua`, `mas_rts_t.lua`, `mas_rts_w.lua`, `mas_rts_lg.lua`, `mas_rts_lh.lua`, `mas_rts_li.lua`, `mas_rts_lj.lua`, `mas_rts_lk.lua`, `mas_rts_ll.lua`, `mas_rts_ln.lua`, `mas_rts_lo.lua`, `mas_rts_lp.lua`, `mas_rts_lt.lua`, `mas_rts_lv.lua`, `mas_rts_lw.lua`, `mas_rts_lx.lua`, `mas_rts_lz.lua`, `mas_rts_3.lua`, `mas_rts_4.lua`, `mas_rts_5.lua`, `mas_rts_6.lua`, `mas_rts_9.lua` — 미검증 디코더(§3.23) |
+| `mas_rts_<t>.lua` × 31 | 3 (RTS TYPE 스펙만 있는 31종) | `mas_rts_a.lua`, `mas_rts_g.lua`, `mas_rts_h.lua`, `mas_rts_i.lua`, `mas_rts_l.lua`, `mas_rts_m.lua`, `mas_rts_n.lua`, `mas_rts_o.lua`, `mas_rts_p.lua`, `mas_rts_q.lua`, `mas_rts_t.lua`, `mas_rts_w.lua`, `mas_rts_lg.lua`, `mas_rts_lh.lua`, `mas_rts_li.lua`, `mas_rts_lj.lua`, `mas_rts_lk.lua`, `mas_rts_ll.lua`, `mas_rts_ln.lua`, `mas_rts_lo.lua`, `mas_rts_lp.lua`, `mas_rts_lt.lua`, `mas_rts_lv.lua`, `mas_rts_lw.lua`, `mas_rts_lx.lua`, `mas_rts_lz.lua`, `mas_rts_3.lua`, `mas_rts_4.lua`, `mas_rts_5.lua`, `mas_rts_6.lua`, `mas_rts_9.lua` — 미검증 디코더(§3.23) |
 | `mas_rts_d.lua` | 3 (RTS TYPE='D') | 주식:호가잔량 디코드, `mas.rts.D.*` 필드. `mas.by_rts_type["D"]`에 등록 (§3.16) |
 | `mas_rts_lc.lua` | 3 (RTS TYPE='c') | 통합시세 11~20 호가 디코드, `mas.rts.c.*` 필드. `mas.by_rts_type["c"]`에 등록 (§3.17) |
 | `mas_rts_k.lua` | 3 (RTS TYPE='K') | 선물:체결 디코드, `mas.rts.K.*` 필드. `mas.by_rts_type["K"]`에 등록 (§3.18) |
@@ -136,7 +136,7 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | `S` | 선물:투자자별순매수 | 5 | `mas_rts_s.lua` | 중간 — 8건(§3.20) |
 | `7` | 프리/애프터마켓 시장현황 | 13 | `mas_rts_7.lua` | 중간 — 5건(§3.21) |
 | `8` | 52주 고가/저가 | 6 | `mas_rts_8.lua` | 중간 — 3건(§3.22) |
-| 스펙만 있는 35종: `A` `G` `H` `I` `L` `M` `N` `O` `P` `Q` `T` `W` `g` `h` `i` `j` `k` `l` `n` `o` `p` `t` `v` `w` `x` `z` `3` `4` `5` `6` `9` | (§3.23) | 스펙 필드 수+2 | `mas_rts_<t>.lua`(대문자·숫자는 소문자화, 소문자는 `l` 접두어) | **미검증 — 실캡처 없음, 스펙·가정으로만 구현** |
+| 스펙만 있는 31종: `A` `G` `H` `I` `L` `M` `N` `O` `P` `Q` `T` `W` `g` `h` `i` `j` `k` `l` `n` `o` `p` `t` `v` `w` `x` `z` `3` `4` `5` `6` `9` | (§3.23) | 스펙 필드 수+2 | `mas_rts_<t>.lua`(대문자·숫자는 소문자화, 소문자는 `l` 접두어) | **미검증 — 실캡처 없음, 스펙·가정으로만 구현** |
 | `?`(0x3F) | — | — | 미구현 | §7 참고 |
 
 ### 3.1 TYPE='B' 필드 레이아웃 (`design/field_spec.md`)
@@ -623,7 +623,7 @@ total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
 
 - 6필드: `key`(종목코드) + 마커 + 스펙 4필드. 3건 전건 일치.
 
-### 3.23 스펙만 있는 35종 (샘플 없음, 미검증)
+### 3.23 스펙만 있는 31종 (샘플 없음, 미검증)
 
 - 대상: 위 현황표의 `A G H I L M N O P Q T W g h i j k l n o p t v w x z 3 4 5 6 9`.
   각 스펙의 필드 목록(`design/field_spec.md`)만으로 만든 모듈이며 실캡처 검증은 전혀 없다.
