@@ -528,15 +528,15 @@ open_price high_price low_price trade_date business_date
 
 ```
 key type_echo quote_time ask_price bid_price
-ask_price1..5 ask_qty1..5 ask_count1..5
-bid_price1..5 bid_qty1..5 bid_count1..5
-total_ask_qty total_ask_count total_bid_qty total_bid_count
+ask_price1..5 ask_qty1..5 ask_qty_chg1..5
+bid_price1..5 bid_qty1..5 bid_qty_chg1..5
+total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
 ```
 
 - 항등식 **274/274(100%) 전건 일치**: `ask_price == ask_price1`,
   `bid_price == bid_price1`, `total_ask_qty == Σask_qty1..5`,
-  `total_ask_count == Σask_count1..5`, `total_bid_qty == Σbid_qty1..5`,
-  `total_bid_count == Σbid_count1..5`. 매도/매수 호가 사다리도 5단계
+  `total_ask_qty_chg == Σask_qty_chg1..5`, `total_bid_qty == Σbid_qty1..5`,
+  `total_bid_qty_chg == Σbid_qty_chg1..5`. 매도/매수 호가 사다리도 5단계
   전부 단조(크기 기준) 확인, 위반 0건 — `q`(§3.12) 때보다도 더 깨끗한
   검증(부분 불일치가 아예 없음).
 - `ask_price`/`bid_price`/`ask_price1..5`/`bid_price1..5`는 `r`/`e`(§3.13)

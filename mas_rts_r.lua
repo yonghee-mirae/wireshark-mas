@@ -18,8 +18,8 @@
 --
 -- Identities verified 274/274 (100%, no partial mismatches):
 --   ask_price == ask_price1, bid_price == bid_price1,
---   total_ask_qty == sum(ask_qty1..5), total_ask_count == sum(ask_count1..5),
---   total_bid_qty == sum(bid_qty1..5), total_bid_count == sum(bid_count1..5).
+--   total_ask_qty == sum(ask_qty1..5), total_ask_qty_chg == sum(ask_qty_chg1..5),
+--   total_bid_qty == sum(bid_qty1..5), total_bid_qty_chg == sum(bid_qty_chg1..5).
 -- Ask/bid price ladders are monotonic (in magnitude) across all 5 levels in
 -- every record, 0 violations.
 --
@@ -55,11 +55,11 @@ local function append(t) for _, v in ipairs(t) do R.FIELD_NAMES[#R.FIELD_NAMES +
 append({ "key", "type_echo", "quote_time", "ask_price", "bid_price" })
 append(ladder("ask_price", 5))
 append(ladder("ask_qty", 5))
-append(ladder("ask_count", 5))
+append(ladder("ask_qty_chg", 5))
 append(ladder("bid_price", 5))
 append(ladder("bid_qty", 5))
-append(ladder("bid_count", 5))
-append({ "total_ask_qty", "total_ask_count", "total_bid_qty", "total_bid_count" })
+append(ladder("bid_qty_chg", 5))
+append({ "total_ask_qty", "total_ask_qty_chg", "total_bid_qty", "total_bid_qty_chg" })
 
 -- Split a tab-separated string into fields, stripping trailing NUL bytes from
 -- each (see mas_rts_b for the version note). Also returns each field's own
@@ -104,24 +104,24 @@ end
 R.FIELD_SPEC = {
   key = { "key", "key" },
   quote_time = { "040", "(040)호가시간" }, ask_price = { "025", "(025)매도호가" },
-  bid_price = { "026", "(026)매수호가" }, ask_price1 = { "051", "(051)매도가1" },
-  ask_price2 = { "052", "(052)매도가2" }, ask_price3 = { "053", "(053)매도가3" },
-  ask_price4 = { "054", "(054)매도가4" }, ask_price5 = { "055", "(055)매도가5" },
-  ask_qty1 = { "041", "(041)매도량1" }, ask_qty2 = { "042", "(042)매도량2" },
-  ask_qty3 = { "043", "(043)매도량3" }, ask_qty4 = { "044", "(044)매도량4" },
-  ask_qty5 = { "045", "(045)매도량5" }, ask_count1 = { "211", "(211)매도건1" },
-  ask_count2 = { "212", "(212)매도건2" }, ask_count3 = { "213", "(213)매도건3" },
-  ask_count4 = { "214", "(214)매도건4" }, ask_count5 = { "215", "(215)매도건5" },
-  bid_price1 = { "071", "(071)매수가1" }, bid_price2 = { "072", "(072)매수가2" },
-  bid_price3 = { "073", "(073)매수가3" }, bid_price4 = { "074", "(074)매수가4" },
-  bid_price5 = { "075", "(075)매수가5" }, bid_qty1 = { "061", "(061)매수량1" },
-  bid_qty2 = { "062", "(062)매수량2" }, bid_qty3 = { "063", "(063)매수량3" },
-  bid_qty4 = { "064", "(064)매수량4" }, bid_qty5 = { "065", "(065)매수량5" },
-  bid_count1 = { "221", "(221)매수건1" }, bid_count2 = { "222", "(222)매수건2" },
-  bid_count3 = { "223", "(223)매수건3" }, bid_count4 = { "224", "(224)매수건4" },
-  bid_count5 = { "225", "(225)매수건5" }, total_ask_qty = { "101", "(101)매도총량" },
-  total_ask_count = { "103", "(103)매도총건" }, total_bid_qty = { "106", "(106)매수총량" },
-  total_bid_count = { "108", "(108)매수총건" },
+  bid_price = { "026", "(026)매수호가" }, ask_price1 = { "051", "(051)매도호가1" },
+  ask_price2 = { "052", "(052)매도호가2" }, ask_price3 = { "053", "(053)매도호가3" },
+  ask_price4 = { "054", "(054)매도호가4" }, ask_price5 = { "055", "(055)매도호가5" },
+  ask_qty1 = { "041", "(041)매도잔량1" }, ask_qty2 = { "042", "(042)매도잔량2" },
+  ask_qty3 = { "043", "(043)매도잔량3" }, ask_qty4 = { "044", "(044)매도잔량4" },
+  ask_qty5 = { "045", "(045)매도잔량5" }, ask_qty_chg1 = { "211", "(211)매도잔량변화1" },
+  ask_qty_chg2 = { "212", "(212)매도잔량변화2" }, ask_qty_chg3 = { "213", "(213)매도잔량변화3" },
+  ask_qty_chg4 = { "214", "(214)매도잔량변화4" }, ask_qty_chg5 = { "215", "(215)매도잔량변화5" },
+  bid_price1 = { "071", "(071)매수호가1" }, bid_price2 = { "072", "(072)매수호가2" },
+  bid_price3 = { "073", "(073)매수호가3" }, bid_price4 = { "074", "(074)매수호가4" },
+  bid_price5 = { "075", "(075)매수호가5" }, bid_qty1 = { "061", "(061)매수잔량1" },
+  bid_qty2 = { "062", "(062)매수잔량2" }, bid_qty3 = { "063", "(063)매수잔량3" },
+  bid_qty4 = { "064", "(064)매수잔량4" }, bid_qty5 = { "065", "(065)매수잔량5" },
+  bid_qty_chg1 = { "221", "(221)매수잔량변화1" }, bid_qty_chg2 = { "222", "(222)매수잔량변화2" },
+  bid_qty_chg3 = { "223", "(223)매수잔량변화3" }, bid_qty_chg4 = { "224", "(224)매수잔량변화4" },
+  bid_qty_chg5 = { "225", "(225)매수잔량변화5" }, total_ask_qty = { "101", "(101)매도총잔량" },
+  total_ask_qty_chg = { "103", "(103)매도총잔량변화" }, total_bid_qty = { "106", "(106)매수총잔량" },
+  total_bid_qty_chg = { "108", "(108)매수총잔량변화" },
 }
 
 if _G.Proto then
