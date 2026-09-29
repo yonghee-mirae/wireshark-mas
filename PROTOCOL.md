@@ -137,6 +137,7 @@ total_bid_qty ask_qty1 bid_qty1 lp_balance_change static_vi_upper
 static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
 ```
 
+- (`issue_code`는 내부 디코드용 이름이고, 상세창 라벨과 필터는 `key`/`mas.rts.B.key`, §6.7.)
 - `issue_code`는 접두어로 시장 구분: `"M."` → M(NXT?), `"N."` → N, 접두어 없음
   → `"K"`(KRX). `E.split_market()`.
 - `sep`는 필드 개수/위치 정렬을 위해 `FIELD_NAMES`에는 남아 있지만 Wireshark
@@ -343,7 +344,7 @@ key3`(스펙: `design/field_spec.md`).
   시퀀스 안에 나타나지 않아 분리 결과가 그대로 맞다).
 - **`change_sign`(대비기호, 024)는 코드 필드다**: `design/field_spec.md`가
   정의한 149/742/752 계열과 같은 1=상한/2=상승/3=보합/4=하한/5=하락
-  코드다. 실캡처 37건(`tcp_capture.cap` + `GlobalPart_RTS.pcapng`)에서
+  코드다. 실캡처 37건(`tcp_capture.cap` + `GlobalPart_RTS.pcap`)에서
   `"0"/"2"/"3"/"5"`가 관측됐고 `2`/`3`/`5`는 상승/보합/하락과 정확히
   일치 — `"0"`은 1..5 사전에 없어 라벨 없이 원본만 표시한다(뉴스에 종목
   가격이 안 붙은 경우로 추정, 미확인). 상세창에는 원본 값 그대로 표시한다(§6.7).
@@ -427,7 +428,7 @@ total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
   보고 스펙을 "매도/매수호가잔량변화"로 정정했다(사용자 확인, 2026-09-28)
   — 해당 호가단계 잔량의 변화분(delta)이라 감소 시 음수가 정상이다.
   `mas_rts_c.lua`의 `ask_qty_chg`/`bid_qty_chg` 네이밍을 그대로 재사용.
-- `samples/GlobalPart_RTS.pcapng`(포트 15201 스트림, pcapng라 이 세션에서
+- `samples/GlobalPart_RTS.pcap`(포트 15201 스트림, pcapng라 이 세션에서
   직접 Ethernet/IPv4/TCP를 재조립해 추출 — tshark/scapy/dpkt 전부 미설치)의
   실캡처 42건(종목 1종 `DTSLA`)으로 검증: `total_ask_qty ==
   Σask_qty1..10`, `total_bid_qty == Σbid_qty1..10`이 **42/42 전건 일치**.
@@ -477,7 +478,7 @@ open_price high_price low_price trade_date business_date
 - `change`(024/전일대비)는 **코드+수치** 필드 — `mas_rts_ls.lua`의
   `change`/`regular_change`/`day_regular_diff`와 같은 컨벤션(선행 1글자가
   1..5 전일대비구분 코드, 나머지가 ASCII 십진 크기). 상세창 표시는 §6.7
-  (코드를 뗀 값 + `(코드;의미)`). `samples/GlobalPart_RTS.pcapng`의
+  (코드를 뗀 값 + `(코드;의미)`). `samples/GlobalPart_RTS.pcap`의
   실캡처 `r` 340건에서 `|price| - decode_coded(change)`가 정확히 상수
   (90.52, 종목 `CLX26`의 기준가)로 전건 일치.
 - `price`/`ask_price`/`bid_price`/`open_price`/`high_price`/`low_price`는
