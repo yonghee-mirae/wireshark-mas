@@ -10,7 +10,7 @@
 -- prefix (`mas.rts.s.*`) both use the literal wire byte "s" as-is.
 --
 -- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is a
--- 41-field tab-separated body (spec: protocols/해외.txt). This is the only
+-- 41-field tab-separated body (spec: design/field_spec.md). This is the only
 -- RTS TYPE this module decodes; every other TYPE is left to mas_rts.lua's
 -- generic "type: <TYPE>"-only handling.
 --
@@ -39,15 +39,6 @@ S.TYPE_OVERSEAS_EXEC = "s"   -- the only RTS TYPE this module decodes
 
 -- 전일대비구분 code -> sign, shared by 149/742/752 and the 코드+수치 fields.
 S.CHANGE_SIGN = { ["1"] = 1, ["2"] = 1, ["3"] = 0, ["4"] = -1, ["5"] = -1 }
-
--- 전일대비구분 code -> Korean meaning, for detail-pane annotation (see
--- add_overseas_exec below).
-S.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
-
--- 코드 필드(값 자체가 전일대비구분 코드) vs 코드&수치 필드(코드+수치가
--- 붙어 있는 값) — 상세창 표시 형식이 다르므로(add_overseas_exec 참고) 구분.
-local CODE_FIELDS = { change_sign = true, regular_change_sign = true, day_regular_diff_sign = true }
-local CODE_VALUE_FIELDS = { change = true, regular_change = true, day_regular_diff = true }
 
 -- Field order (0-based index 0..40), for RTS TYPE='s' (Overseas Stock Execution).
 S.FIELD_NAMES = {
@@ -113,6 +104,46 @@ function S.decode(body)
   return rec
 end
 
+-- 전일대비구분 code -> Korean meaning, for the (code;meaning) note on 코드+수치 fields.
+S.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
+
+-- 코드+수치 필드 (design/field_spec.md): returns the value without its leading
+-- code plus the "code;meaning" note, e.g. "22.6700" -> "2.6700", "2;상승".
+-- Returns nil for an unknown code (caller shows the raw value).
+function S.split_coded(tok)
+  local label = S.CHANGE_LABEL[tok:sub(1, 1)]
+  if label then return tok:sub(2), tok:sub(1, 1) .. ";" .. label end
+end
+
+local CODE_VALUE_FIELDS = { change = true, regular_change = true, day_regular_diff = true }
+
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.s.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+S.FIELD_SPEC = {
+  key = { "key", "key" },
+  realtime_gubun = { "888", "(888)실시간구분" }, price_decimal_places = { "480", "(480)가격소수점자리수" },
+  business_date = { "310", "(310)영업일자" }, data_date_kr = { "146", "(146)자료일자(한국)" },
+  data_time_kr = { "034", "(034)자료시간(한국)" }, market_gubun = { "672", "(672)장구분" },
+  change_sign = { "149", "(149)전일대비구분" }, volume_gubun = { "387", "(387)체결량구분" },
+  trade_gubun = { "035", "(035)체결구분" }, base_price = { "635", "(635)기준가" },
+  price = { "023", "(023)현재가" }, change = { "024", "(024)전일대비" },
+  change_rate = { "033", "(033)등락율" }, open_price = { "029", "(029)시가" },
+  high_price = { "030", "(030)고가" }, low_price = { "031", "(031)저가" },
+  bid_price = { "026", "(026)매수호가" }, ask_price = { "025", "(025)매도호가" },
+  trade_volume = { "032", "(032)단위거래량" }, trade_value_k = { "722", "(722)단위거래대금(천)" },
+  acc_volume = { "027", "(027)누적거래량" }, acc_value_k = { "028", "(028)누적거래대금(천)" },
+  open_change_rate = { "488", "(488)시가대비등락율" }, high_change_rate = { "487", "(487)고가대비등락율" },
+  low_change_rate = { "489", "(489)저가대비등락율" }, vwap = { "252", "(252)가중평균가" },
+  prev_day_ratio = { "251", "(251)전일거래비" }, trade_strength = { "388", "(388)체결강도" },
+  regular_price = { "736", "(736)정규장 현재가" }, regular_change_sign = { "742", "(742)정규장 전일대비구분" },
+  regular_change = { "743", "(743)정규장 전일대비" }, regular_change_rate = { "739", "(739)정규장 등락율" },
+  regular_open_price = { "729", "(729)정규장 시가" }, regular_high_price = { "730", "(730)정규장 고가" },
+  regular_low_price = { "731", "(731)정규장 저가" }, day_regular_diff_sign = { "752", "(752)주간 정규장대비구분" },
+  day_regular_diff = { "753", "(753)주간 정규장대비" }, day_regular_diff_rate = { "754", "(754)주간 정규장대비등락율" },
+  chart_skip_gubun = { "676", "(676)차트 Tick,N분 SKIP구분" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -123,11 +154,10 @@ if _G.Proto then
   -- day_regular_diff) since their raw string form isn't directly usable.
   local pf = {}
   for _, name in ipairs(S.FIELD_NAMES) do
-    pf[name] = ProtoField.string("mas.rts.s." .. name, name)
+    if S.FIELD_SPEC[name] then  -- RTS-TYPE(000) is never displayed
+      pf[name] = ProtoField.string("mas.rts.s." .. S.FIELD_SPEC[name][1], S.FIELD_SPEC[name][2])
+    end
   end
-  pf.change_num           = ProtoField.double("mas.rts.s.change_num", "change(decoded)")
-  pf.regular_change_num   = ProtoField.double("mas.rts.s.regular_change_num", "regular_change(decoded)")
-  pf.day_regular_diff_num = ProtoField.double("mas.rts.s.day_regular_diff_num", "day_regular_diff(decoded)")
 
   local fields = {}
   for _, f in pairs(pf) do fields[#fields + 1] = f end
@@ -154,36 +184,14 @@ if _G.Proto then
     end
     local base = poff + r.off + 6   -- body start within tvb
     for _, name in ipairs(S.FIELD_NAMES) do
-      local o = rec.__offsets[name]
-      if CODE_FIELDS[name] then
-        -- 코드 필드: "값(의미)", e.g. "2 (상승)".
-        local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-        local label = S.CHANGE_LABEL[rec[name]]
-        if label then ti:append_text(" (" .. label .. ")") end
-      elseif CODE_VALUE_FIELDS[name] then
-        -- 코드&수치 필드: 값에서 코드를 떼어 수치만 보여주고, "값(코드;의미)",
-        -- e.g. "2.6700 (2;상승)". 코드가 알려지지 않은 값이면 원본 그대로.
-        local code = rec[name]:sub(1, 1)
-        local label = S.CHANGE_LABEL[code]
-        if label then
-          local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name]:sub(2))
-          ti:append_text(" (" .. code .. ";" .. label .. ")")
-        else
-          sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-        end
-      else
-        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      if pf[name] then
+        local o = rec.__offsets[name]
+        local shown, note = rec[name]
+        if CODE_VALUE_FIELDS[name] then shown, note = S.split_coded(rec[name]) end
+        local ti = sub:add(pf[name], tvb(base + o.off, o.len), shown or rec[name])
+        if note then ti:append_text(" (" .. note .. ")") end
       end
     end
-    local co = rec.__offsets.change
-    local chg = S.decode_coded(rec.change)
-    if chg then sub:add(pf.change_num, tvb(base + co.off, co.len), chg) end
-    local rco = rec.__offsets.regular_change
-    local rchg = S.decode_coded(rec.regular_change)
-    if rchg then sub:add(pf.regular_change_num, tvb(base + rco.off, rco.len), rchg) end
-    local dco = rec.__offsets.day_regular_diff
-    local dchg = S.decode_coded(rec.day_regular_diff)
-    if dchg then sub:add(pf.day_regular_diff_num, tvb(base + dco.off, dco.len), dchg) end
     return true
   end
 

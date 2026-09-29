@@ -5,7 +5,7 @@
 -- decodes; every other TYPE is left to mas_rts.lua's generic
 -- "type: <TYPE>"-only handling.
 --
--- Field order/names are the spec given in inner/wireshark 추가.txt, confirmed
+-- Field order/names are the spec given in design/field_spec.md, confirmed
 -- against samples/20260921_nana.pcapng (100 sampled records, all exactly 11
 -- tab-separated fields).
 --
@@ -68,6 +68,17 @@ function V.decode(body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.V.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+V.FIELD_SPEC = {
+  key = { "key", "key" }, trade_time = { "034", "(034)거래시간" },
+  price = { "023", "(023)현재가" }, change = { "024", "(024)전일대비" },
+  change_rate = { "033", "(033)등락률" }, volume = { "027", "(027)거래량" },
+  open_price = { "029", "(029)시가" }, high_price = { "030", "(030)고가" },
+  low_price = { "031", "(031)저가" }, date = { "047", "(047)일자" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -77,7 +88,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(V.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.V." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.V." .. V.FIELD_SPEC[name][1], V.FIELD_SPEC[name][2])
     end
   end
 

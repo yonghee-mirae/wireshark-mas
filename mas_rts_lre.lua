@@ -13,8 +13,8 @@
 -- mas.by_rts_type["e"]) and the Wireshark FILTER prefixes (`mas.rts.r.*`,
 -- `mas.rts.e.*`) both use the literal wire byte as-is.
 --
--- protocols/해외.txt: "type e / 해외선물옵션 체결(SnapShot Filter) ... type r와
--- 동일" — 'r' and 'e' share the exact same 15-field layout, differing only
+-- design/field_spec.md lists them in one "type 'r'/'e'" section —
+-- 'r' and 'e' share the exact same 15-field layout, differing only
 -- in which RTS-DATA TYPE byte selects them on the wire (a snapshot-filtered
 -- subscription vs the regular stream). Both are registered here against the
 -- same decode()/add() so there's exactly one implementation to maintain, but
@@ -29,7 +29,7 @@
 -- path but is unverified against real capture data.
 --
 -- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is a
--- 15-field tab-separated body (spec: protocols/해외.txt). This is the only
+-- 15-field tab-separated body (spec: design/field_spec.md). This is the only
 -- pair of RTS TYPEs this module decodes; every other TYPE is left to
 -- mas_rts.lua's generic "type: <TYPE>"-only handling.
 --
@@ -75,9 +75,6 @@ LRE.TYPE_OVERSEAS_FUT_EXEC_SNAPSHOT = "e"   -- spec-only variant, same layout
 -- 전일대비구분 code -> sign, same 1..5 dictionary as mas_rts_ls.lua's
 -- S.CHANGE_SIGN (duplicated locally per this project's per-file convention).
 LRE.CHANGE_SIGN = { ["1"] = 1, ["2"] = 1, ["3"] = 0, ["4"] = -1, ["5"] = -1 }
-
--- 전일대비구분 code -> Korean meaning, for detail-pane annotation.
-LRE.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
 
 -- Field order (0-based index 0..14), for RTS TYPE='r'/'e' (Overseas
 -- Futures/Options Execution).
@@ -136,6 +133,33 @@ function LRE.decode(body)
   return rec
 end
 
+-- 전일대비구분 code -> Korean meaning, for the (code;meaning) note on 코드+수치 fields.
+LRE.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
+
+-- 코드+수치 필드 (design/field_spec.md): returns the value without its leading
+-- code plus the "code;meaning" note, e.g. "22.6700" -> "2.6700", "2;상승".
+-- Returns nil for an unknown code (caller shows the raw value).
+function LRE.split_coded(tok)
+  local label = LRE.CHANGE_LABEL[tok:sub(1, 1)]
+  if label then return tok:sub(2), tok:sub(1, 1) .. ";" .. label end
+end
+
+local CODE_VALUE_FIELDS = { change = true }
+
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.r.<suffix> / mas.rts.e.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+LRE.FIELD_SPEC = {
+  key = { "key", "key" },
+  trade_time = { "034", "(034)처리시간" }, price = { "023", "(023)현재가" },
+  change = { "024", "(024)전일대비" }, change_rate = { "033", "(033)등락율" },
+  ask_price = { "025", "(025)매도호가" }, bid_price = { "026", "(026)매수호가" },
+  trade_volume = { "032", "(032)체결량" }, acc_volume = { "027", "(027)거래량" },
+  open_price = { "029", "(029)시가" }, high_price = { "030", "(030)고가" },
+  low_price = { "031", "(031)저가" }, trade_date = { "619", "(619)거래일자" },
+  business_date = { "618", "(618)영업일" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -145,7 +169,9 @@ if _G.Proto then
   local function make_pf(prefix)
     local pf = {}
     for _, name in ipairs(LRE.FIELD_NAMES) do
-      pf[name] = ProtoField.string("mas.rts." .. prefix .. "." .. name, name)
+      if LRE.FIELD_SPEC[name] then  -- RTS-TYPE(000) is never displayed
+        pf[name] = ProtoField.string("mas.rts." .. prefix .. "." .. LRE.FIELD_SPEC[name][1], LRE.FIELD_SPEC[name][2])
+      end
     end
     return pf
   end
@@ -184,20 +210,12 @@ if _G.Proto then
     local pf = pf_by_type[r.type]
     local base = poff + r.off + 6   -- body start within tvb
     for _, name in ipairs(LRE.FIELD_NAMES) do
-      local o = rec.__offsets[name]
-      if name == "change" then
-        -- 코드&수치 필드: 값에서 코드를 떼어 수치만 보여주고, "값(코드;의미)",
-        -- e.g. "0.84 (5;하락)". 코드가 알려지지 않은 값이면 원본 그대로.
-        local code = rec[name]:sub(1, 1)
-        local label = LRE.CHANGE_LABEL[code]
-        if label then
-          local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name]:sub(2))
-          ti:append_text(" (" .. code .. ";" .. label .. ")")
-        else
-          sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-        end
-      else
-        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      if pf[name] then
+        local o = rec.__offsets[name]
+        local shown, note = rec[name]
+        if CODE_VALUE_FIELDS[name] then shown, note = LRE.split_coded(rec[name]) end
+        local ti = sub:add(pf[name], tvb(base + o.off, o.len), shown or rec[name])
+        if note then ti:append_text(" (" .. note .. ")") end
       end
     end
     return true

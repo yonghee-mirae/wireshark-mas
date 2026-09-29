@@ -38,37 +38,38 @@ local function split_with_offsets(s)
   return toks, offsets
 end
 
--- Order code dictionary, in layout order: { code, english name }. The body is a
+-- Order code dictionary, in layout order: { code, Korean name } (names copied
+-- verbatim from design/field_spec.md). The body is a
 -- self-describing, variable stream of code/value pairs, so a field is identified
 -- by its numeric code (not by position as in the execution record). Duplicate
 -- labels are disambiguated by the code appended in the display name.
 O.ORDER_FIELDS = {
-  { "950", "account_no" },              { "975", "branch_no" },
-  { "953", "issue_short_code" },        { "954", "order_notice_title" },
-  { "955", "title_end_flag" },          { "956", "issue_name" },
-  { "980", "buy_sell_fill_type" },      { "960", "buy_sell_type" },
-  { "963", "trade_type" },              { "981", "order_condition" },
-  { "973", "process_type" },            { "983", "process_type" },
-  { "977", "process_type" },            { "987", "order_type" },
-  { "995", "short_sell_flag" },         { "479", "board_id" },
-  { "370", "loan_rate" },               { "635", "base_price" },
-  { "903", "credit_type" },             { "929", "credit_type_text" },
-  { "902", "credit_loan_date" },        { "951", "order_method (exchange)" },
-  { "988", "rebalancing_exchange_amend_flag" }, { "982", "auto_cancel_type" },
-  { "994", "credit_loan_order_type" }, { "952", "order_no" },
-  { "961", "original_order_no" },       { "957", "order_qty" },
-  { "958", "order_price" },             { "978", "total_filled_qty" },
-  { "964", "total_filled_amount" },     { "959", "total_unfilled_qty" },
-  { "984", "total_cancelled_qty" },     { "989", "total_rejected_qty" },
-  { "985", "stop_price" },              { "986", "stop_status" },
-  { "966", "fill_serial_no" },          { "965", "fill_time" },
-  { "962", "exchange_type" },           { "969", "order_no" },
-  { "970", "original_order_no" },       { "967", "fill_price" },
-  { "968", "fill_qty" },                { "974", "unfilled_qty" },
-  { "971", "rejected_qty" },            { "972", "cancelled_qty" },
+  { "950", "계좌번호" },  { "975", "지점번호" },
+  { "953", "종목단축코드" },  { "954", "주문통보TITLE" },
+  { "955", "TITLE END FLAG" },  { "956", "종목명" },
+  { "980", "매수/매도 체결구분" },  { "960", "매수매도 구분" },
+  { "963", "매매구분" },  { "981", "주문조건" },
+  { "973", "처리구분" },  { "983", "처리구분" },
+  { "977", "처리구분" },  { "987", "주문구분" },
+  { "995", "공매도여부" },  { "479", "보드ID" },
+  { "370", "대출율" },  { "635", "기준가" },
+  { "903", "신용구분" },  { "929", "신용구분TEXT" },
+  { "902", "신용대출일" },  { "951", "주문방법(거래소)" },
+  { "988", "리밸런싱여부/거래소정정여부" },  { "982", "자동취소구분값" },
+  { "994", "신용주문구분" },  { "952", "주문번호" },
+  { "961", "원주문번호" },  { "957", "주문수량" },
+  { "958", "주문가격" },  { "978", "체결수량 합계" },
+  { "964", "체결금액 합계" },  { "959", "미체결수량 합계" },
+  { "984", "취소수량 합계" },  { "989", "거부수량 합계" },
+  { "985", "스탑가격" },  { "986", "스탑상태" },
+  { "966", "체결일련번호" },  { "965", "체결시간" },
+  { "962", "거래소구분" },  { "969", "주문번호" },
+  { "970", "원주문번호" },  { "967", "체결가격" },
+  { "968", "체결수량" },  { "974", "미체결수량" },
+  { "971", "거부수량" },  { "972", "취소수량" },
 }
 
--- code -> english name lookup, built from ORDER_FIELDS.
+-- code -> Korean name lookup, built from ORDER_FIELDS.
 O.ORDER_NAMES = {}
 for _, f in ipairs(O.ORDER_FIELDS) do O.ORDER_NAMES[f[1]] = f[2] end
 
@@ -108,14 +109,14 @@ if _G.Proto then
   mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
 
   -- One string field per dictionary code (filter mas.tr.90.<code>, display
-  -- "<english name> (<code>)"). Codes are variable per message; an unknown code
+  -- "(<code>)<Korean name>"). Codes are variable per message; an unknown code
   -- falls back to mas.tr.90.unknown. AXIS-HEADER fields live in mas_tr.lua
   -- (mas.tr.*), shared across every Transaction MSGK decoder.
   local pf = { unknown = ProtoField.string("mas.tr.90.unknown", "unknown_code") }
   local fields = { pf.unknown }
   for _, f in ipairs(O.ORDER_FIELDS) do
     local code, name = f[1], f[2]
-    pf[code] = ProtoField.string("mas.tr.90." .. code, name .. " (" .. code .. ")")
+    pf[code] = ProtoField.string("mas.tr.90." .. code, "(" .. code .. ")" .. name)
     fields[#fields + 1] = pf[code]
   end
   mas.proto.fields = fields
@@ -158,15 +159,15 @@ if gui_enabled() then
   -- codes, per-column occurrence lists can still misalign across those messages
   -- (a documented limitation of the shared zip-by-index Statistics window).
   local ORDER_COLUMNS = {
-    { field = "950", header = "Account No (950)",      width = 18 },
-    { field = "952", header = "Order No (952)",         width = 14 },
-    { field = "975", header = "Branch No (975)",        width = 12 },
-    { field = "969", header = "Order No (969)",         width = 14 },
-    { field = "951", header = "Order Method (951)",     width = 14 },
-    { field = "953", header = "Issue Code (953)",       width = 12 },
-    { field = "977", header = "Process Type (977)",     width = 18 },
-    { field = "957", header = "Order Qty (957)",        width = 10 },
-    { field = "958", header = "Order Price (958)",      width = 12 },
+    { field = "950", header = "(950)계좌번호",      width = 18 },
+    { field = "952", header = "(952)주문번호",      width = 14 },
+    { field = "975", header = "(975)지점번호",      width = 12 },
+    { field = "969", header = "(969)주문번호",      width = 14 },
+    { field = "951", header = "(951)주문방법(거래소)", width = 20 },
+    { field = "953", header = "(953)종목단축코드",  width = 16 },
+    { field = "977", header = "(977)처리구분",      width = 14 },
+    { field = "957", header = "(957)주문수량",      width = 12 },
+    { field = "958", header = "(958)주문가격",      width = 12 },
   }
   local extractors = {}
   for i, c in ipairs(ORDER_COLUMNS) do extractors[i] = Field.new("mas.tr.90." .. c.field) end

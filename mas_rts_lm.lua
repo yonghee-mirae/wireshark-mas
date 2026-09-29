@@ -18,7 +18,7 @@
 -- decodes; every other TYPE is left to mas_rts.lua's generic
 -- "type: <TYPE>"-only handling.
 --
--- Field order/names are the spec given in inner/wireshark 추가.txt, confirmed
+-- Field order/names are the spec given in design/field_spec.md, confirmed
 -- against samples/20260921_nana.pcapng (19 sampled records) and
 -- samples/20260915_0809_RTS2.pcapng (4 sampled records) — both always
 -- exactly 16 tab-separated fields. Field names are literal transliterations
@@ -37,16 +37,6 @@ mas.by_rts_type = mas.by_rts_type or {}
 local LM = {}   -- module table: pure helpers (returned for tests)
 
 LM.TYPE_NEWS = "m"   -- the only RTS TYPE this module decodes (lowercase)
-
--- 전일대비구분 code -> Korean meaning (same 1..5 dictionary as
--- mas_rts_ls.lua's S.CHANGE_LABEL, for the shared 코드 필드 convention in
--- design/field_spec.md — duplicated locally rather than shared cross-file,
--- matching this project's existing per-file duplication convention). Real
--- captures (37 records, tcp_capture.cap + GlobalPart_RTS.pcapng) show
--- change_sign values "0"/"2"/"3"/"5" — "2"/"3"/"5" match 상승/보합/하락
--- exactly; "0" isn't in the 1..5 dictionary (presumably "해당 없음" for a
--- news item with no attached price, unconfirmed) and is left unlabeled.
-LM.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
 
 -- Field order (0-based index 0..15), for RTS TYPE='m' (Market Commentary).
 LM.FIELD_NAMES = {
@@ -109,6 +99,20 @@ function LM.decode(body, raw_body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.m.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+LM.FIELD_SPEC = {
+  key = { "key", "key" }, content = { "015", "(015)내용" },
+  issue_code = { "301", "(301)종목코드" }, issue_name = { "022", "(022)종목명" },
+  key1 = { "041", "(041)KEY1" }, key2 = { "042", "(042)KEY2" },
+  time = { "043", "(043)시간" }, category = { "044", "(044)분류" },
+  category2 = { "045", "(045)분류2" }, provider = { "046", "(046)제공처" },
+  date = { "047", "(047)일자" }, price = { "048", "(048)현재가" },
+  volume = { "049", "(049)거래량" }, change_sign = { "024", "(024)대비기호" },
+  key3 = { "050", "(050)KEY3" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -118,7 +122,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(LM.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.m." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.m." .. LM.FIELD_SPEC[name][1], LM.FIELD_SPEC[name][2])
     end
   end
 
@@ -157,12 +161,7 @@ if _G.Proto then
     for _, name in ipairs(LM.FIELD_NAMES) do
       if pf[name] then
         local o = rec.__offsets[name]
-        local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-        if name == "change_sign" then
-          -- 코드 필드(design/field_spec.md): "값(의미)", e.g. "2 (상승)".
-          local label = LM.CHANGE_LABEL[rec[name]]
-          if label then ti:append_text(" (" .. label .. ")") end
-        end
+        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
       end
     end
     return true

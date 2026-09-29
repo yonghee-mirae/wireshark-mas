@@ -8,7 +8,7 @@
 -- This is the only RTS TYPE this module decodes; every other TYPE is left to
 -- mas_rts.lua's generic "type: <TYPE>"-only handling.
 --
--- Field order/names are the spec given in inner/wireshark 추가.txt, confirmed
+-- Field order/names are the spec given in design/field_spec.md, confirmed
 -- against samples/20260921_nana.pcapng (33 sampled records) and
 -- samples/20260915_0809_RTS2.pcapng (52 sampled records) — both always
 -- exactly 51 tab-separated fields.
@@ -77,6 +77,37 @@ function Z.decode(body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.Z.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+Z.FIELD_SPEC = {
+  key = { "key", "key" }, trade_time = { "034", "(034)처리시간" },
+  sell_amt_501 = { "501", "(501)매도AMT" }, buy_amt_601 = { "601", "(601)매수AMT" },
+  net_buy_amt_701 = { "701", "(701)순매수A" }, sell_amt_502 = { "502", "(502)매도AMT" },
+  buy_amt_602 = { "602", "(602)매수AMT" }, net_buy_amt_702 = { "702", "(702)순매수A" },
+  sell_amt_503 = { "503", "(503)매도AMT" }, buy_amt_603 = { "603", "(603)매수AMT" },
+  net_buy_amt_703 = { "703", "(703)순매수A" }, sell_amt_504 = { "504", "(504)매도AMT" },
+  buy_amt_604 = { "604", "(604)매수AMT" }, net_buy_amt_704 = { "704", "(704)순매수A" },
+  sell_amt_505 = { "505", "(505)매도AMT" }, buy_amt_605 = { "605", "(605)매수AMT" },
+  net_buy_amt_705 = { "705", "(705)순매수A" }, sell_amt_506 = { "506", "(506)매도AMT" },
+  buy_amt_606 = { "606", "(606)매수AMT" }, net_buy_amt_706 = { "706", "(706)순매수A" },
+  sell_amt_507 = { "507", "(507)매도AMT" }, buy_amt_607 = { "607", "(607)매수AMT" },
+  net_buy_amt_707 = { "707", "(707)순매수A" }, sell_amt_508 = { "508", "(508)매도AMT" },
+  buy_amt_608 = { "608", "(608)매수AMT" }, net_buy_amt_708 = { "708", "(708)순매수A" },
+  sell_amt_509 = { "509", "(509)매도AMT" }, buy_amt_609 = { "609", "(609)매수AMT" },
+  net_buy_amt_709 = { "709", "(709)순매수A" }, sell_amt_510 = { "510", "(510)매도AMT" },
+  buy_amt_610 = { "610", "(610)매수AMT" }, net_buy_amt_710 = { "710", "(710)순매수A" },
+  sell_amt_530 = { "530", "(530)매도AMT" }, buy_amt_630 = { "630", "(630)매수AMT" },
+  net_buy_amt_730 = { "730", "(730)순매수A" }, sell_amt_531 = { "531", "(531)매도AMT" },
+  buy_amt_631 = { "631", "(631)매수AMT" }, net_buy_amt_731 = { "731", "(731)순매수A" },
+  sell_amt_560 = { "560", "(560)매도AMT" }, buy_amt_660 = { "660", "(660)매수AMT" },
+  net_buy_amt_760 = { "760", "(760)순매수A" }, sell_amt_570 = { "570", "(570)매도AMT" },
+  buy_amt_670 = { "670", "(670)매수AMT" }, net_buy_amt_770 = { "770", "(770)순매수A" },
+  sell_amt_571 = { "571", "(571)매도AMT" }, buy_amt_671 = { "671", "(671)매수AMT" },
+  net_buy_amt_771 = { "771", "(771)순매수A" }, sell_amt_590 = { "590", "(590)매도AMT" },
+  buy_amt_690 = { "690", "(690)매수AMT" }, net_buy_amt_790 = { "790", "(790)순매수A" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -86,7 +117,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(Z.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.Z." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.Z." .. Z.FIELD_SPEC[name][1], Z.FIELD_SPEC[name][2])
     end
   end
 

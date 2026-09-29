@@ -5,7 +5,7 @@
 -- decodes; every other TYPE is left to mas_rts.lua's generic
 -- "type: <TYPE>"-only handling.
 --
--- Field order/names are the spec given in inner/wireshark 추가.txt. Unlike
+-- Field order/names are the spec given in design/field_spec.md. Unlike
 -- mas_rts_j.lua (TYPE='J', live sector index), this has no open/high/low
 -- price fields — just the expected index value + change + volume + market
 -- status. NOT cross-checked against a real capture (none observed so far in
@@ -73,6 +73,17 @@ function X.decode(body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.X.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+X.FIELD_SPEC = {
+  key = { "key", "key" }, trade_time = { "034", "(034)시간" },
+  index = { "023", "(023)지수" }, change = { "024", "(024)전일대비" },
+  change_rate = { "033", "(033)등락율" }, trade_volume = { "032", "(032)체결량" },
+  acc_volume = { "027", "(027)거래량" }, acc_value = { "028", "(028)거래대금" },
+  market_status = { "490", "(490)장상태구분" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -82,7 +93,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(X.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.X." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.X." .. X.FIELD_SPEC[name][1], X.FIELD_SPEC[name][2])
     end
   end
 

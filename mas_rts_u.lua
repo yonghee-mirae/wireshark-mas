@@ -70,6 +70,17 @@ function S.decode(body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.U.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+S.FIELD_SPEC = {
+  key = { "key", "key" }, trade_time = { "034", "(034)시간" },
+  up_count = { "252", "(252)상승종목" }, upper_limit_count = { "251", "(251)상한종목" },
+  flat_count = { "253", "(253)보합종목" }, down_count = { "255", "(255)하락종목" },
+  lower_limit_count = { "254", "(254)하한종목" }, volume = { "027", "(027)거래량" },
+  value = { "028", "(028)거래대금" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -79,7 +90,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(S.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.U." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.U." .. S.FIELD_SPEC[name][1], S.FIELD_SPEC[name][2])
     end
   end
 

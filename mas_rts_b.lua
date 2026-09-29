@@ -26,7 +26,6 @@ E.TYPE_EXEC = "B"   -- the only RTS TYPE this module decodes
 -- rate field) within rounding noise from change_rate's 2-decimal precision.
 -- Dictionary duplicated locally per this project's per-file convention.
 E.CHANGE_SIGN = { ["1"] = 1, ["2"] = 1, ["3"] = 0, ["4"] = -1, ["5"] = -1 }
-E.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
 
 -- Decode a 코드+수치 field ("212900" -> 12900 상승, "59800" -> -9800 하락).
 -- Returns nil if the leading character isn't a known 전일대비구분 code or the
@@ -151,6 +150,44 @@ function E.new_reversal()
   return self
 end
 
+-- 전일대비구분 code -> Korean meaning, for the (code;meaning) note on 코드+수치 fields.
+E.CHANGE_LABEL = { ["1"] = "상한", ["2"] = "상승", ["3"] = "보합", ["4"] = "하한", ["5"] = "하락" }
+
+-- 코드+수치 필드 (design/field_spec.md): returns the value without its leading
+-- code plus the "code;meaning" note, e.g. "22.6700" -> "2.6700", "2;상승".
+-- Returns nil for an unknown code (caller shows the raw value).
+function E.split_coded(tok)
+  local label = E.CHANGE_LABEL[tok:sub(1, 1)]
+  if label then return tok:sub(2), tok:sub(1, 1) .. ";" .. label end
+end
+
+local CODE_VALUE_FIELDS = { change = true }
+
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.B.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+E.FIELD_SPEC = {
+  issue_code = { "key", "key" }, trade_time = { "034", "(034)체결시간" },
+  price = { "023", "(023)현재가" }, change = { "024", "(024)전일대비" },
+  change_rate = { "033", "(033)등락율" }, ask_price = { "025", "(025)매도호가" },
+  bid_price = { "026", "(026)매수호가" }, trade_volume = { "032", "(032)체결량" },
+  acc_volume = { "027", "(027)거래량" }, acc_value = { "028", "(028)거래대금" },
+  open_price = { "029", "(029)시가" }, high_price = { "030", "(030)고가" },
+  low_price = { "031", "(031)저가" }, prev_ratio = { "251", "(251)전대비율" },
+  vwap = { "252", "(252)가중평균" }, per = { "355", "(355)PER" },
+  lp_balance = { "273", "(273)LP잔량" }, lp_ratio = { "274", "(274)LP비율" },
+  market_cap = { "299", "(299)시가총액" }, trade_strength = { "387", "(387)체결강도" },
+  trade_strength_3m = { "388", "(388)3M체결강도" }, trade_strength_10m = { "270", "(270)10M체결강도" },
+  trade_strength_30m = { "271", "(271)30M체결강도" }, trade_strength_60m = { "272", "(272)60M체결강도" },
+  trade_strength_5d = { "266", "(266)5일평균체강" }, trade_strength_10d = { "267", "(267)10일평균체강" },
+  trade_strength_20d = { "268", "(268)20일평균체강" }, trade_strength_60d = { "269", "(269)60일평균체강" },
+  total_ask_qty = { "036", "(036)매도총량" }, total_bid_qty = { "039", "(039)매수총량" },
+  ask_qty1 = { "241", "(241)매도량1" }, bid_qty1 = { "242", "(242)매수량1" },
+  lp_balance_change = { "275", "(275)LP잔량대비" }, static_vi_upper = { "720", "(720)정적VI예상상한가" },
+  static_vi_lower = { "721", "(721)정적VI예상하한가" }, trade_market = { "820", "(820)체결시장구분" },
+  nxt_vi_upper = { "718", "(718)NXT VI예상상한가" }, nxt_vi_lower = { "719", "(719)NXT 정적VI예상하한가" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -162,15 +199,11 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(E.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.B." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.B." .. E.FIELD_SPEC[name][1], E.FIELD_SPEC[name][2])
     end
   end
-  pf.market       = ProtoField.string("mas.rts.B.market", "market")
-  pf.acc_volume_num   = ProtoField.int64("mas.rts.B.acc_volume_num", "acc_volume(int)")
-  pf.price_num        = ProtoField.int64("mas.rts.B.price_num", "price(int)")
-  pf.trade_volume_num = ProtoField.int64("mas.rts.B.trade_volume_num", "trade_volume(int)")
-  pf.change_num       = ProtoField.double("mas.rts.B.change_num", "change(decoded)")
-  pf.reversed     = ProtoField.bool("mas.rts.B.reversed", "reversed")
+  pf.market       = ProtoField.string("mas.rts.B.market", "거래소")
+  pf.reversed     = ProtoField.bool("mas.rts.B.reversed", "역전")
 
   local fields = {}
   for _, f in pairs(pf) do fields[#fields + 1] = f end
@@ -209,29 +242,13 @@ if _G.Proto then
       -- (the whole record body) under that field instead of omitting it.
       if pf[name] and rec[name] then
         local o = rec.__offsets[name]
-        if name == "change" then
-          -- 코드&수치 필드: 값에서 코드를 떼어 수치만 보여주고, "값(코드;의미)",
-          -- e.g. "12900 (2;상승)". 코드가 알려지지 않은 값이면 원본 그대로.
-          local code = rec[name]:sub(1, 1)
-          local label = E.CHANGE_LABEL[code]
-          if label then
-            local ti = sub:add(pf[name], tvb(base + o.off, o.len), rec[name]:sub(2))
-            ti:append_text(" (" .. code .. ";" .. label .. ")")
-          else
-            sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-          end
-        else
-          sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-        end
+        local shown, note = rec[name]
+        if CODE_VALUE_FIELDS[name] then shown, note = E.split_coded(rec[name]) end
+        local ti = sub:add(pf[name], tvb(base + o.off, o.len), shown or rec[name])
+        if note then ti:append_text(" (" .. note .. ")") end
       end
     end
-    local av_off, pr_off, tv_off = rec.__offsets.acc_volume, rec.__offsets.price, rec.__offsets.trade_volume
-    local an = tonumber(rec.acc_volume);   if an then sub:add(pf.acc_volume_num, tvb(base + av_off.off, av_off.len), Int64(an)) end
-    local pn = tonumber(rec.price);        if pn then sub:add(pf.price_num, tvb(base + pr_off.off, pr_off.len), Int64(pn)) end
-    local tn = tonumber(rec.trade_volume); if tn then sub:add(pf.trade_volume_num, tvb(base + tv_off.off, tv_off.len), Int64(tn)) end
-    local ch_off = rec.__offsets.change
-    local chg = E.decode_coded(rec.change)
-    if chg then sub:add(pf.change_num, tvb(base + ch_off.off, ch_off.len), chg) end
+    local av_off = rec.__offsets.acc_volume
 
     local seq = pinfo.number * 1000 + msg_index
     local rev, prev_frame = reversal:eval(
@@ -250,13 +267,13 @@ end
 if gui_enabled() then
   -- Column spec: { field = mas.rts.B field suffix, header, width, map = optional formatter }.
   local EXEC_COLUMNS = {
-    { field = "market",       header = "Market",   width = 6 },
-    { field = "issue_code",   header = "Issue",    width = 9 },
-    { field = "trade_time",   header = "Time",     width = 8 },
-    { field = "price",        header = "Price",    width = 10 },
-    { field = "trade_volume", header = "TrdVol",   width = 8 },
-    { field = "acc_volume",   header = "AccVol",   width = 10 },
-    { field = "reversed",     header = "Reversed", width = 8,
+    { field = "market",       header = "거래소",         width = 8 },
+    { field = "key",          header = "key",            width = 9 },
+    { field = "034",          header = "(034)체결시간",  width = 18 },
+    { field = "023",          header = "(023)현재가",    width = 16 },
+    { field = "032",          header = "(032)체결량",    width = 16 },
+    { field = "027",          header = "(027)거래량",    width = 16 },
+    { field = "reversed",     header = "역전",           width = 8,
       map = function(v) return v and "Y" or "" end },
   }
   local extractors = {}

@@ -9,15 +9,12 @@
 -- `mas_rts_lre.lua` instead of the plain name, since 'R' claimed it first.
 --
 -- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is a
--- 39-field tab-separated body. protocols/해외.txt's spec lists 72 fields
--- total, but every one of 274 real TYPE='R' records (symbol CLX26,
--- samples/GlobalPart_RTS.pcapng) is **exactly** 39 fields — the spec's
--- fields from 117(예상가격) onward (34 fields: 예상가격/예상대비/예상등락,
--- two 매도비/매수비 ratio groups, 순매수총잔량, 실시간상한/하한가,
--- 예상체결수량) never appear on the wire in any sample (same "spec richer
--- than wire" situation as mas_rts_lq.lua/mas_rts_lre.lua) — only the
--- verified 39-field body is implemented here, per mas_rts_b.lua's 36/39
--- precedent for an unconfirmed tail.
+-- 39-field tab-separated body (key + the 38 fields of design/field_spec.md;
+-- the spec once listed 72 fields, the 34 from 117(예상가격) onward — 예상가격/
+-- 예상대비/예상등락, two 매도비/매수비 ratio groups, 순매수총잔량,
+-- 실시간상한/하한가, 예상체결수량 — never appeared on the wire and were
+-- since dropped from the spec). All 274 real TYPE='R' records (symbol CLX26,
+-- samples/GlobalPart_RTS.pcap) are exactly 39 fields.
 --
 -- Identities verified 274/274 (100%, no partial mismatches):
 --   ask_price == ask_price1, bid_price == bid_price1,
@@ -101,6 +98,32 @@ function R.decode(body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.R.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+R.FIELD_SPEC = {
+  key = { "key", "key" },
+  quote_time = { "040", "(040)호가시간" }, ask_price = { "025", "(025)매도호가" },
+  bid_price = { "026", "(026)매수호가" }, ask_price1 = { "051", "(051)매도가1" },
+  ask_price2 = { "052", "(052)매도가2" }, ask_price3 = { "053", "(053)매도가3" },
+  ask_price4 = { "054", "(054)매도가4" }, ask_price5 = { "055", "(055)매도가5" },
+  ask_qty1 = { "041", "(041)매도량1" }, ask_qty2 = { "042", "(042)매도량2" },
+  ask_qty3 = { "043", "(043)매도량3" }, ask_qty4 = { "044", "(044)매도량4" },
+  ask_qty5 = { "045", "(045)매도량5" }, ask_count1 = { "211", "(211)매도건1" },
+  ask_count2 = { "212", "(212)매도건2" }, ask_count3 = { "213", "(213)매도건3" },
+  ask_count4 = { "214", "(214)매도건4" }, ask_count5 = { "215", "(215)매도건5" },
+  bid_price1 = { "071", "(071)매수가1" }, bid_price2 = { "072", "(072)매수가2" },
+  bid_price3 = { "073", "(073)매수가3" }, bid_price4 = { "074", "(074)매수가4" },
+  bid_price5 = { "075", "(075)매수가5" }, bid_qty1 = { "061", "(061)매수량1" },
+  bid_qty2 = { "062", "(062)매수량2" }, bid_qty3 = { "063", "(063)매수량3" },
+  bid_qty4 = { "064", "(064)매수량4" }, bid_qty5 = { "065", "(065)매수량5" },
+  bid_count1 = { "221", "(221)매수건1" }, bid_count2 = { "222", "(222)매수건2" },
+  bid_count3 = { "223", "(223)매수건3" }, bid_count4 = { "224", "(224)매수건4" },
+  bid_count5 = { "225", "(225)매수건5" }, total_ask_qty = { "101", "(101)매도총량" },
+  total_ask_count = { "103", "(103)매도총건" }, total_bid_qty = { "106", "(106)매수총량" },
+  total_bid_count = { "108", "(108)매수총건" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -109,7 +132,9 @@ if _G.Proto then
   -- Register a string field per FIELD_NAMES entry.
   local pf = {}
   for _, name in ipairs(R.FIELD_NAMES) do
-    pf[name] = ProtoField.string("mas.rts.R." .. name, name)
+    if R.FIELD_SPEC[name] then  -- RTS-TYPE(000) is never displayed
+      pf[name] = ProtoField.string("mas.rts.R." .. R.FIELD_SPEC[name][1], R.FIELD_SPEC[name][2])
+    end
   end
 
   local fields = {}
@@ -137,8 +162,10 @@ if _G.Proto then
     end
     local base = poff + r.off + 6   -- body start within tvb
     for _, name in ipairs(R.FIELD_NAMES) do
-      local o = rec.__offsets[name]
-      sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      if pf[name] then
+        local o = rec.__offsets[name]
+        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
+      end
     end
     return true
   end

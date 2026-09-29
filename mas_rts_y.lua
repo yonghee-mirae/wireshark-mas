@@ -6,7 +6,7 @@
 -- every other TYPE is left to mas_rts.lua's generic "type: <TYPE>"-only
 -- handling.
 --
--- Field order/names are the spec given in inner/wireshark 추가.txt, confirmed
+-- Field order/names are the spec given in design/field_spec.md, confirmed
 -- against samples/20260921_nana.pcapng (33 sampled records) and
 -- samples/20260915_0809_RTS2.pcapng (52 sampled records) — both always
 -- exactly 51 tab-separated fields.
@@ -78,6 +78,37 @@ function Y.decode(body)
   return rec
 end
 
+-- Spec code + detail-pane label per field, from design/field_spec.md:
+-- FIELD_SPEC[name] = { filter suffix (mas.rts.Y.<suffix>), label }. The wire's
+-- leading key (not in the spec) is "key"; `sep` is never displayed.
+Y.FIELD_SPEC = {
+  key = { "key", "key" }, trade_time = { "034", "(034)처리시간" },
+  sell_qty_101 = { "101", "(101)매도QTY" }, buy_qty_201 = { "201", "(201)매수QTY" },
+  net_buy_qty_301 = { "301", "(301)순매수Q" }, sell_qty_102 = { "102", "(102)매도QTY" },
+  buy_qty_202 = { "202", "(202)매수QTY" }, net_buy_qty_302 = { "302", "(302)순매수Q" },
+  sell_qty_103 = { "103", "(103)매도QTY" }, buy_qty_203 = { "203", "(203)매수QTY" },
+  net_buy_qty_303 = { "303", "(303)순매수Q" }, sell_qty_104 = { "104", "(104)매도QTY" },
+  buy_qty_204 = { "204", "(204)매수QTY" }, net_buy_qty_304 = { "304", "(304)순매수Q" },
+  sell_qty_105 = { "105", "(105)매도QTY" }, buy_qty_205 = { "205", "(205)매수QTY" },
+  net_buy_qty_305 = { "305", "(305)순매수Q" }, sell_qty_106 = { "106", "(106)매도QTY" },
+  buy_qty_206 = { "206", "(206)매수QTY" }, net_buy_qty_306 = { "306", "(306)순매수Q" },
+  sell_qty_107 = { "107", "(107)매도QTY" }, buy_qty_207 = { "207", "(207)매수QTY" },
+  net_buy_qty_307 = { "307", "(307)순매수Q" }, sell_qty_108 = { "108", "(108)매도QTY" },
+  buy_qty_208 = { "208", "(208)매수QTY" }, net_buy_qty_308 = { "308", "(308)순매수Q" },
+  sell_qty_109 = { "109", "(109)매도QTY" }, buy_qty_209 = { "209", "(209)매수QTY" },
+  net_buy_qty_309 = { "309", "(309)순매수Q" }, sell_qty_110 = { "110", "(110)매도QTY" },
+  buy_qty_210 = { "210", "(210)매수QTY" }, net_buy_qty_310 = { "310", "(310)순매수Q" },
+  sell_qty_130 = { "130", "(130)매도QTY" }, buy_qty_230 = { "230", "(230)매수QTY" },
+  net_buy_qty_330 = { "330", "(330)순매수Q" }, sell_qty_131 = { "131", "(131)매도QTY" },
+  buy_qty_231 = { "231", "(231)매수QTY" }, net_buy_qty_331 = { "331", "(331)순매수Q" },
+  sell_qty_160 = { "160", "(160)매도QTY" }, buy_qty_260 = { "260", "(260)매수QTY" },
+  net_buy_qty_360 = { "360", "(360)순매수Q" }, sell_qty_170 = { "170", "(170)매도QTY" },
+  buy_qty_270 = { "270", "(270)매수QTY" }, net_buy_qty_370 = { "370", "(370)순매수Q" },
+  sell_qty_171 = { "171", "(171)매도QTY" }, buy_qty_271 = { "271", "(271)매수QTY" },
+  net_buy_qty_371 = { "371", "(371)순매수Q" }, sell_qty_190 = { "190", "(190)매도QTY" },
+  buy_qty_290 = { "290", "(290)매수QTY" }, net_buy_qty_390 = { "390", "(390)순매수Q" },
+}
+
 if _G.Proto then
   -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
   -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
@@ -87,7 +118,7 @@ if _G.Proto then
   local pf = {}
   for _, name in ipairs(Y.FIELD_NAMES) do
     if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.Y." .. name, name)
+      pf[name] = ProtoField.string("mas.rts.Y." .. Y.FIELD_SPEC[name][1], Y.FIELD_SPEC[name][2])
     end
   end
 
