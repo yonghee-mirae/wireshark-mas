@@ -8,7 +8,7 @@
 -- SESS handlers: mas_rts.lua (RTS) and mas_tr.lua (Transaction). Message decoders, one file per TYPE/MSGK:
 -- mas_rts_<t>.lua (register in mas.rts_defs) and mas_tr_90.lua (mas.by_msgk). A lowercase TYPE gets an "l" prefix
 -- (mas_rts_lm.lua for 'm') so it cannot collide with an uppercase twin; the filter prefix and registration key
--- stay the literal wire byte.
+-- stay the literal wire byte. mas_stat_rts.lua adds the Statistics > MAS > RTS window (one TYPE's records as CSV).
 --
 -- Copy ALL files into the plugins dir. They share the global `_G.mas`; load order is not relied upon.
 

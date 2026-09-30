@@ -188,6 +188,7 @@ local function define_rts_type(def)
       sub:add_proto_expert_info(expert_badfields)
       return false
     end
+    if mas.collect then mas.collect(pinfo, r, poff, def, rec) end   -- set only while mas_stat_rts.lua collects
     local pf = pf_by_type[r.type]
     local offs, lens = rec.__off, rec.__len
     if def.exchange then
@@ -208,7 +209,7 @@ local function define_rts_type(def)
   end
 
   for _, t in ipairs(types) do
-    mas.by_rts_type[t] = { add = add_record, init = def.init }
+    mas.by_rts_type[t] = { add = add_record, init = def.init, def = def }
   end
 end
 
