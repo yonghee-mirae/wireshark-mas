@@ -129,7 +129,7 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | `mas_rts_7.lua` | 3 (RTS TYPE='7') | 프리/애프터마켓 시장현황 디코드, `mas.rts.7.*` 필드. `mas.by_rts_type["7"]`에 등록 (§3.21) |
 | `mas_rts_8.lua` | 3 (RTS TYPE='8') | 52주 고가/저가 디코드, `mas.rts.8.*` 필드. `mas.by_rts_type["8"]`에 등록 (§3.22) |
 | `u`(소문자) | 해외주식 체결(After Market) | 31 | `mas_rts_lu.lua` | 중간 — 73건(§3.15, `GlobalStock_type_u.pcap`), 항등식 전건 일치 — 관측된 코드가 전부 `2`(상승)이고 종목이 NVDA 하나뿐 |
-| `D` | 주식:호가잔량 | 80 | `mas_rts_d.lua` | 높음 — 1,142건(§3.16) 필드 수 전건 일치, `total_ask_qty == Σask_qty1..10` 전건 일치 |
+| `D` | 주식:호가잔량 | 80 | `mas_rts_d.lua` | 높음 — 1,142건(§3.16) 필드 수 전건 일치, `f101 == Σf041..f050` 전건 일치 |
 | `c`(소문자) | 통합시세 11~20 호가 | 102 | `mas_rts_lc.lua` | 낮음 — 280건(§3.17) 필드 수 일치하나 값이 전부 0 |
 | `K` | 선물:체결 | 37 | `mas_rts_k.lua` | 중간 — 88건(§3.18), `tcp_capture.cap` |
 | `y`(소문자) | DRFN종목검색 | 54 | `mas_rts_ly.lua` | 중간 — 11건(§3.19), 스펙 외 필드 1개(`extra`) |
@@ -139,149 +139,153 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 | 스펙만 있는 31종: `A` `G` `H` `I` `L` `M` `N` `O` `P` `Q` `T` `W` `g` `h` `i` `j` `k` `l` `n` `o` `p` `t` `v` `w` `x` `z` `3` `4` `5` `6` `9` | (§3.23) | 스펙 필드 수+2 | `mas_rts_<t>.lua`(대문자·숫자는 소문자화, 소문자는 `l` 접두어) | **미검증 — 실캡처 없음, 스펙·가정으로만 구현** |
 | `?`(0x3F) | — | — | 미구현 | §7 참고 |
 
+**모듈 구조와 내부 필드명 규약:** 각 RTS TYPE 모듈은 정의 테이블 하나를
+`mas.rts_defs[#mas.rts_defs + 1] = { type = "A", fields = { {"023", "현재가"}, ... }, ... }`로 등록한다.
+`fields`는 스펙 필드를 와이어 순서로 나열한 것이고, 선두의 `key`와 `type_echo`는 자동으로 붙는다
+(스펙 밖 잉여 필드는 끝에 `"extra"`). 그 밖의 키: `strip`/`base_count`(디코드), `exchange`, `euckr`, `coded`,
+`types`/`expert_id`(lre), `extra_fields`/`after`/`init`(b). `mas_rts.lua`의 `define_rts_type`이
+`decode`, `FIELD_NAMES`/`FIELD_SPEC`, 상세창 필드, 필드 수 expert(`Unexpected TYPE <T> field count`),
+`mas.by_rts_type[TYPE]`를 만든다. 모듈이 `mas_rts.lua`보다 먼저 로드돼도 큐(`mas.rts_defs`)에 쌓였다가 처리되므로
+플러그인 로드 순서와 무관하다. 이름은 스펙 코드 `f<코드>`
+(예: `f023`, 4자리 코드는 `f1040`)다. 스펙에 코드가 없는 선두 키는 `key`, 숨은 레코드 타입 마커는
+`type_echo`, 스펙 밖 잉여 필드는 `extra`. 필터 `mas.rts.<T>.<코드>`, 라벨 `(코드)한글명`과 1:1이다.
+
 ### 3.1 TYPE='B' 필드 레이아웃 (`design/field_spec.md`)
 
-탭 구분 39필드, `E.FIELD_NAMES`(코드 순서 그대로):
+탭 구분 39필드, `fields`(와이어 순서 그대로):
 
 ```
-issue_code sep trade_time price change change_rate ask_price bid_price
-trade_volume acc_volume acc_value open_price high_price low_price prev_ratio
-vwap per lp_balance lp_ratio market_cap trade_strength trade_strength_3m
-trade_strength_10m trade_strength_30m trade_strength_60m trade_strength_5d
-trade_strength_10d trade_strength_20d trade_strength_60d total_ask_qty
-total_bid_qty ask_qty1 bid_qty1 lp_balance_change static_vi_upper
-static_vi_lower trade_market nxt_vi_upper nxt_vi_lower
+key type_echo f034 f023 f024 f033 f025 f026
+f032 f027 f028 f029 f030 f031 f251
+f252 f355 f273 f274 f299 f387 f388
+f270 f271 f272 f266
+f267 f268 f269 f036
+f039 f241 f242 f275 f720
+f721 f820 f718 f719
 ```
 
-- (`issue_code`는 내부 디코드용 이름이고, 상세창 라벨과 필터는 `key`/`mas.rts.B.key`, §6.7.)
-- `issue_code`는 접두어로 시장 구분: `"M."` → M(NXT?), `"N."` → N, 접두어 없음
-  → `"K"`(KRX). `E.split_market()`.
-- `sep`는 필드 개수/위치 정렬을 위해 `FIELD_NAMES`에는 남아 있지만 Wireshark
+- (상세창 라벨과 필터는 `key`/`mas.rts.B.key`, §6.7.)
+- `key`는 접두어로 시장 구분: `"M."` → M(NXT?), `"N."` → N, 접두어 없음
+  → `"K"`(KRX). `mas.split_exchange()`(`mas_rts.lua` 공용; `B` `C` `D` `F` `c`가 사용).
+- `type_echo`는 필드 개수/위치 정렬을 위해 `FIELD_NAMES`에는 남아 있지만 Wireshark
   필드로는 등록하지 않는다.
-- **마지막 3필드(`trade_market`, `nxt_vi_upper`, `nxt_vi_lower`)는 NXT
-  교차상장 종목에만 존재한다.** `issue_code`에 `"M."`/`"N."` 접두어가 붙은
+- **마지막 3필드(`f820`, `f718`, `f719`)는 NXT
+  교차상장 종목에만 존재한다.** `key`에 `"M."`/`"N."` 접두어가 붙은
   종목만 39필드 전부를 보내고, 접두어 없는(KRX 전용) 종목은 이 3필드를
   통째로 생략한 **36필드만** 보낸다(빈 문자열이 아니라 필드 자체가 없음).
-  `E.decode`는 36/39 둘 다 유효로 받아들이고(`E.FIELD_NAMES_BASE_COUNT =
+  디코더는 36/39 둘 다 유효로 받아들이고(`base_count =
   36`), 36필드일 때는 저 3필드를 `rec`에서 아예 비워(nil) 상세창에도
-  표시하지 않는다. `add_exec`의 필드 표시 루프도 `rec[name]`이 `nil`이면
-  건너뛴다. 39/36 둘 다 아닌 진짜 손상 레코드만 `expert_badfields`로
+  표시하지 않는다. 공용 표시 루프(`define_rts_type`)도 `rec[name]`이 `nil`이면
+  건너뛴다. 39/36 둘 다 아닌 진짜 손상 레코드만 expert로
   플래그된다.
-- `change`(전일대비)는 **코드+수치** 필드 — TYPE='r'/'e'(§3.13)의 `change`/
-  `mas_rts_ls.lua`의 `change`/`regular_change`/`day_regular_diff`와 같은
+- `f024`(전일대비)는 **코드+수치** 필드 — TYPE='r'/'e'(§3.13)의 `f024`/
+  `mas_rts_ls.lua`의 `f024`/`f743`/`f753`와 같은
   컨벤션(선행 1글자가 1..5 전일대비구분 코드, 나머지가 ASCII 십진 크기).
   상세창 표시는 §6.7(코드를 뗀 값 + `(코드;의미)`). 실캡처
-  1,777건(`tcp_capture.cap`) 전건에서 `change`가 1..5 코드로 시작하고,
-  `|price| - decode_coded(change)`가 `|price|/(1+change_rate/100)`(등락율로
+  1,777건(`tcp_capture.cap`) 전건에서 `f024`가 1..5 코드로 시작하고,
+  `|f023| - signed(f024)`가 `|f023|/(1+f033/100)`(등락율로
   독립적으로 구한 기준가)와 등락율의 소수점 2자리 정밀도에서 오는 반올림
-  오차 범위 내로 일치 — `price`/`open_price`/`high_price`/`low_price` 등
+  오차 범위 내로 일치 — `f023`/`f029`/`f030`/`f031` 등
   가격류 필드 자체의 부호가 "기준가 대비 플래그"라는 사실(§3.13에서 먼저
-  발견, `mas_rts_lre.lua`의 `r` 340건과 교차검증)과는 별개로, `change`는
+  발견, `mas_rts_lre.lua`의 `r` 340건과 교차검증)과는 별개로, `f024`는
   처음부터 `s`/`r` 계열과 동일한 코드+수치 인코딩이었다(사용자 확인,
   2026-09-28).
-- 파생 필드: `market`(거래소), `reversed`(역전, 누적거래량 역전 탐지,
-  5-tuple+market+issue_code 단위, 프레임 재방문 시에도 안정적인 idempotent 캐시).
-- 필드: `mas.rts.B.<코드>`(39필드 중 `sep` 제외, 첫 필드는 `mas.rts.B.key`),
-  `mas.rts.B.market`(거래소), `mas.rts.B.reversed`(역전) — 규칙은 §6.7.
-- Statistics 창: **MAS/Execution Prices** — Market/Issue/Time/Price/TrdVol/
-  AccVol/Reversed 컬럼, 5-tuple(Flow) 별 구분. tap 필터는 `mas.rts.B.market`.
+- 파생 필드: `exchange`(거래소), `reversed`(역전, 누적거래량 역전 탐지,
+  5-tuple+exchange+key 단위, 프레임 재방문 시에도 안정적인 idempotent 캐시).
+- 필드: `mas.rts.B.<코드>`(39필드 중 `type_echo` 제외, 첫 필드는 `mas.rts.B.key`),
+  `mas.rts.B.exchange`(거래소), `mas.rts.B.reversed`(역전) — 규칙은 §6.7.
 
 ### 3.2 TYPE='C' 필드 레이아웃 — 호가 (`mas_rts_c.lua`)
 
-바디는 128 tab-분리 필드(127개 명명 필드 + 숨은 레코드타입 문자 `sep`='C'
-1개). 매핑은 `named[0] → wire[0]`(Key=`issue_code`), `named[k] →
-wire[k+1]`(k≥1, sep 1칸 건너뜀).
+바디는 128 tab-분리 필드(127개 명명 필드 + 숨은 레코드타입 문자 `type_echo`='C'
+1개). 매핑은 `named[0] → wire[0]`(Key=`key`), `named[k] →
+wire[k+1]`(k≥1, type_echo 1칸 건너뜀).
 
 | wire | 필드명(영문) | 비고 |
 |---|---|---|
-| 0 | `issue_code` | |
-| 1 | `sep`('C') | Wireshark 필드로 등록 안 함 |
-| 2 | `trade_time` | `HHMMSS` |
-| 3–12 | `ask_price1..10` | |
-| 13–22 | `ask_qty1..10` | `= krx_ask_qty + nxt_ask_qty`(항등식 검증) |
-| 23–32 | `ask_qty_chg1..10`(추정 명칭) | 존재/위치 확실, 의미(변동분/비율)는 추정 |
-| 33–42 | `krx_ask_qty1..10` | |
-| 43–52 | `nxt_ask_qty1..10` | |
-| 53–62 | `bid_price1..10` | |
-| 63–72 | `bid_qty1..10` | `= krx_bid_qty + nxt_bid_qty`(항등식 검증) |
-| 73–82 | `bid_qty_chg1..10`(추정 명칭) | 존재/위치 확실, 의미는 추정 |
-| 83–92 | `krx_bid_qty1..10` | |
-| 93–102 | `nxt_bid_qty1..10` | |
-| 103 | `total_ask_qty` | `= sum(ask_qty1..10) = krx_total_ask_qty + nxt_total_ask_qty` |
-| 104 | `total_ask_qty_chg`(추정 명칭) | 존재/위치 확실, 의미는 추정 |
-| 105 | `total_bid_qty` | `= sum(bid_qty1..10) = krx_total_bid_qty + nxt_total_bid_qty` |
-| 106 | `total_bid_qty_chg`(추정 명칭) | 존재/위치 확실, 의미는 추정 |
-| 107–113 | `expected_price`/`expected_qty`/`expected_change`/`expected_change_rate`/`expected_change_amt`/`expected_change_amt2`(추정)/`arbitrage_basis` | 장중 캡처에는 항상 0/공백(동시호가 이벤트 없음 — 미검증이 아니라 비활성 구간) |
-| 114 | `net_buy_total_qty` | `= total_bid_qty - total_ask_qty`(부호 포함, 항등식 검증) |
-| 115 | `expected_fill_qty_ratio` | 캡처 구간엔 항상 `0.00` |
-| 116–123 | `nxt_mid_price`/`nxt_ask_mid_qty`/`nxt_bid_mid_qty`/`krx_mid_price`/`krx_ask_mid_qty`/`krx_bid_mid_qty`/`nxt_mid_total_net_qty`/`mid_total_net_qty` | 스펙 1950~1957과 일치(스펙 확정). `mid_total_net_qty`는 스펙상 1957 KRX중간가총순잔량이나 코드 필드명엔 `krx_` 접두어가 없다. 캡처 구간엔 항상 0/`-0` |
-| 124–125 | `krx_total_ask_qty`/`nxt_total_ask_qty`(스펙 1102/1103) | 합이 `total_ask_qty`와 일치(항등식 검증) |
-| 126–127 | `krx_total_bid_qty`/`nxt_total_bid_qty`(스펙 1107/1108) | 합이 `total_bid_qty`와 일치(항등식 검증) |
+| 0 | `key` | |
+| 1 | `type_echo`('C') | Wireshark 필드로 등록 안 함 |
+| 2 | `f1040` | `HHMMSS` |
+| 3–12 | `f1051..f1060` | |
+| 13–22 | `f1041..f1050` | `= krx_ask_qty + nxt_ask_qty`(항등식 검증) |
+| 23–32 | `f1081..f1090`(추정 명칭) | 존재/위치 확실, 의미(변동분/비율)는 추정 |
+| 33–42 | `f1241..f1250` | |
+| 43–52 | `f1441..f1450` | |
+| 53–62 | `f1071..f1080` | |
+| 63–72 | `f1061..f1070` | `= krx_bid_qty + nxt_bid_qty`(항등식 검증) |
+| 73–82 | `f1091..f1100`(추정 명칭) | 존재/위치 확실, 의미는 추정 |
+| 83–92 | `f1261..f1270` | |
+| 93–102 | `f1461..f1470` | |
+| 103 | `f1101` | `= sum(f1041..f1050) = f1102 + f1103` |
+| 104 | `f1104`(추정 명칭) | 존재/위치 확실, 의미는 추정 |
+| 105 | `f1106` | `= sum(f1061..f1070) = f1107 + f1108` |
+| 106 | `f1109`(추정 명칭) | 존재/위치 확실, 의미는 추정 |
+| 107–113 | `f1111`/`f1112`/`f1113`/`f1114`/`f1115`/`f1116`(추정)/`f1204` | 장중 캡처에는 항상 0/공백(동시호가 이벤트 없음 — 미검증이 아니라 비활성 구간) |
+| 114 | `f1180` | `= f1106 - f1101`(부호 포함, 항등식 검증) |
+| 115 | `f1819` | 캡처 구간엔 항상 `0.00` |
+| 116–123 | `f1950`/`f1951`/`f1952`/`f1953`/`f1954`/`f1955`/`f1956`/`f1957` | 스펙 1950~1957과 일치(스펙 확정). `f1957`는 스펙상 1957 KRX중간가총순잔량이나 코드 필드명엔 `krx_` 접두어가 없다. 캡처 구간엔 항상 0/`-0` |
+| 124–125 | `f1102`/`f1103`(스펙 1102/1103) | 합이 `f1101`와 일치(항등식 검증) |
+| 126–127 | `f1107`/`f1108`(스펙 1107/1108) | 합이 `f1106`와 일치(항등식 검증) |
 
-- 구현 파일: `mas_rts_c.lua`. `Q.FIELD_NAMES`(128개), `Q.decode(body)`,
-  `Q.split_market`(체결과 동일한 이슈코드 접두어 규칙).
-- 필드: `mas.rts.C.<코드>`(128필드 중 `sep` 제외, 첫 필드는 `mas.rts.C.key`), `mas.rts.C.market`(거래소) — §6.7.
-- Statistics 창: 없음(요청 범위 밖).
+- 구현 파일: `mas_rts_c.lua`. 필드 128개(`fields`),
+  `mas.split_exchange`(체결과 동일한 이슈코드 접두어 규칙).
+- 필드: `mas.rts.C.<코드>`(128필드 중 `type_echo` 제외, 첫 필드는 `mas.rts.C.key`), `mas.rts.C.exchange`(거래소) — §6.7.
 
 ### 3.3 TYPE='U' 필드 레이아웃 — 업종:등락 (`mas_rts_u.lua`)
 
 개별 종목이 아니라 **시장/업종 전체의 등락 집계**(코스피·코스닥 등). 10
-tab-분리 필드: `key, sep, trade_time, up_count, upper_limit_count,
-flat_count, down_count, lower_limit_count, volume, value`.
+tab-분리 필드: `key, type_echo, f034, f252, f251,
+f253, f255, f254, f027, f028`.
 
-- 구현 파일: `mas_rts_u.lua`. `S.FIELD_NAMES`(10개), `S.decode(body)`.
-  첫 필드명이 `issue_code`가 아니라 `key`인 이유: 종목코드가 아니라
-  시장/업종 키(예: `KQ001`, `K0001`)라 `split_market` 같은 접두어 분해는
+- 구현 파일: `mas_rts_u.lua`. 필드 10개(`fields`).
+  첫 필드(`key`)가 종목코드가 아니라
+  시장/업종 키(예: `KQ001`, `K0001`)라 `split_exchange` 같은 접두어 분해는
   적용하지 않는다.
-- 검증: `up_count + upper_limit_count + flat_count + down_count +
-  lower_limit_count`가 코스피 표본에서 항상 **801**(코스피 상장종목 수),
+- 검증: `f252 + f251 + f253 + f255 +
+  f254`가 코스피 표본에서 항상 **801**(코스피 상장종목 수),
   코스닥 표본에서 **1521~1523**(종목이 상승↔보합↔하락 카테고리를 넘나드는
   정상적인 틱 변동)과 일치.
-- 필드: `mas.rts.U.<field>`(10필드 중 `sep` 제외).
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.U.<field>`(10필드 중 `type_echo` 제외).
 
 ### 3.4 TYPE='V' 필드 레이아웃 — 해외:지수 (`mas_rts_v.lua`)
 
 CME/COMEX 선물이나 원/달러 환율 같은 **해외 지수·상품·환율**. 11
-tab-분리 필드: `key, sep, trade_time, price, change, change_rate, volume,
-open_price, high_price, low_price, date`(스펙: `design/field_spec.md`).
+tab-분리 필드: `key, type_echo, f034, f023, f024, f033, f027,
+f029, f030, f031, f047`(스펙: `design/field_spec.md`).
 
-- 구현 파일: `mas_rts_v.lua`. `V.FIELD_NAMES`(11개), `V.decode(body)`.
+- 구현 파일: `mas_rts_v.lua`. 필드 11개(`fields`).
   `key`는 `"CME@NQ"`/`"USDKRWSMBS"`처럼 `@` 구분 심볼이라(KRX 종목코드의
   `.` 접두어 규칙과 다름) 접두어 분해는 적용하지 않는다.
-- 필드: `mas.rts.V.<field>`(11필드 중 `sep` 제외).
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.V.<field>`(11필드 중 `type_echo` 제외).
 
 ### 3.5 TYPE='J' 필드 레이아웃 — 업종:시세(지수) (`mas_rts_j.lua`)
 
-KOSPI/KOSDAQ 등 **업종 지수 자체의 시세**. 13 tab-분리 필드: `key, sep,
-trade_time, index, change, change_rate, trade_volume, acc_volume, acc_value,
-open_price, high_price, low_price, market_status`(스펙: `design/field_spec.md`).
+KOSPI/KOSDAQ 등 **업종 지수 자체의 시세**. 13 tab-분리 필드: `key, type_echo,
+f034, f023, f024, f033, f032, f027, f028,
+f029, f030, f031, f490`(스펙: `design/field_spec.md`).
 
-- 구현 파일: `mas_rts_j.lua`. `J.FIELD_NAMES`(13개), `J.decode(body)`.
+- 구현 파일: `mas_rts_j.lua`. 필드 13개(`fields`).
   `key`는 §3.3/§3.4와 같은 이유로 업종 코드(예: `K2001`)라 접두어 분해를
-  적용하지 않는다. `trade_volume`/`acc_volume`/`acc_value` 필드명은 §3.1의
+  적용하지 않는다. `f032`/`f027`/`f028` 필드명은 §3.1의
   체결 필드 네이밍을 그대로 재사용했다(같은 "틱당 vs. 누적" 구분).
-- 필드: `mas.rts.J.<field>`(13필드 중 `sep` 제외).
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.J.<field>`(13필드 중 `type_echo` 제외).
 
 ### 3.6 TYPE='X' 필드 레이아웃 — 업종:예상지수 (`mas_rts_x.lua`)
 
 §3.5의 TYPE='J'와 같은 업종 지수지만 **"예상"(장 시작 전 등 추정치) 값**.
-10 tab-분리 필드: `key, sep, trade_time, index, change, change_rate,
-trade_volume, acc_volume, acc_value, market_status` — TYPE='J'와 거의 같은
+10 tab-분리 필드: `key, type_echo, f034, f023, f024, f033,
+f032, f027, f028, f490` — TYPE='J'와 거의 같은
 구조지만 open/high/low_price 3개가 없다(추정치라 그 개념이 없는 것으로
 보임).
 
-- 구현 파일: `mas_rts_x.lua`. `X.FIELD_NAMES`(10개), `X.decode(body)`.
-  `key`/`trade_volume`/`acc_volume`/`acc_value` 네이밍은 §3.5(TYPE='J')과
+- 구현 파일: `mas_rts_x.lua`. 필드 10개(`fields`).
+  `key`/`f032`/`f027`/`f028` 네이밍은 §3.5(TYPE='J')과
   동일한 이유로 그대로 재사용했다.
 - **주의: 실캡처에서 TYPE='X'가 관측된 적이 없다.** 스펙 문서 자체의 예시
   행(`X0001 X 085512 -6614.54 -69.83 -1.04 630843 630843 6089856 0`,
   10필드)만으로 Wireshark Lua 스텁 디코드를 확인했다 — 필드 이름/의미는
   실측으로 검증되지 않았으니 실캡처가 확보되면 재검증할 것.
-- 필드: `mas.rts.X.<field>`(10필드 중 `sep` 제외).
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.X.<field>`(10필드 중 `type_echo` 제외).
 
 ### 3.7 TYPE='F' 필드 레이아웃 — 주식:거래원 (`mas_rts_f.lua`)
 
@@ -291,81 +295,77 @@ trade_volume, acc_volume, acc_value, market_status` — TYPE='J'와 거의 같�
 순매도%(코드 231~235)/순매수%(코드 236~240) 5단×2 + 매도/매수 증감
 5단×2(스펙: `design/field_spec.md`).
 
-- 구현 파일: `mas_rts_f.lua`. `F.FIELD_NAMES`(78개), `F.decode(body)`.
-  `issue_code`는 `"M.A005930"`처럼 §3.1/§3.2와 같은 마켓 접두어 규칙이라
-  `split_market`을 그대로 적용한다(§3.3~§3.6의 `key`와 달리 진짜
+- 구현 파일: `mas_rts_f.lua`. 필드 78개(`fields`).
+  `key`는 `"M.A005930"`처럼 §3.1/§3.2와 같은 마켓 접두어 규칙이라
+  `split_exchange`을 그대로 적용한다(§3.3~§3.6의 `key`와 달리 진짜
   종목코드).
 - **스펙 정정**: 원 스펙 문서는 코드 231~235와 236~240을 똑같이
   `순매수%1~5`로 표기했으나, **231~235는 실제로 `순매도%1~5`(net SELL
   %)**다 — 236~240만 `순매수%1~5`(net BUY %)가 맞다. 필드명은
-  `net_sell_pct1..5`/`net_buy_pct1..5`(다른 필드와 동일하게 `ladder()`
+  `f231..f235`/`f236..f240`(다른 필드와 동일하게 `ladder()`
   헬퍼로 생성).
 - **주의: 실측 5건뿐**(§3.2/§3.5 등 100건대보다 신뢰도 낮음). 5건 전부
   정확히 78개 tab-구분 필드로 쪼개짐은 확인됐다.
-- 필드: `mas.rts.F.<코드>`(78필드 중 `sep` 제외, 첫 필드는 `mas.rts.F.key`) + `mas.rts.F.market`(거래소) — §6.7.
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.F.<코드>`(78필드 중 `type_echo` 제외, 첫 필드는 `mas.rts.F.key`) + `mas.rts.F.exchange`(거래소) — §6.7.
 
 ### 3.8 TYPE='Y' 필드 레이아웃 — 투자자QTY (`mas_rts_y.lua`)
 
-**16개 투자자 구분별 매도/매수/순매수 수량**. 51 tab-분리 필드: `key, sep,
-trade_time` + 16개 구분×3(매도QTY/매수QTY/순매수Q)(스펙: `design/field_spec.md`).
+**16개 투자자 구분별 매도/매수/순매수 수량**. 51 tab-분리 필드: `key, type_echo,
+f034` + 16개 구분×3(매도QTY/매수QTY/순매수Q)(스펙: `design/field_spec.md`).
 
-- 구현 파일: `mas_rts_y.lua`. `Y.FIELD_NAMES`(51개), `Y.decode(body)`.
+- 구현 파일: `mas_rts_y.lua`. 필드 51개(`fields`).
   `key`는 §3.3~§3.6과 같은 이유로 시장 키(예: `"0500000000"`)라 접두어
   분해를 적용하지 않는다.
 - **네이밍 주의**: 스펙의 16개 투자자 구분 코드(`101,102,...,110,130,131,
   160,170,171,190` — 매수는 +100, 순매수는 +200)에 구분 이름이 전혀 없어서
   (예: 어느 게 "개인"/"외국인"/"기관"인지 불명) 의미를 추측하지 않고
-  **스펙 코드 번호 그대로**(`sell_qty_101`, `buy_qty_201`,
-  `net_buy_qty_301`, ...) 필드명을 지었다.
-- 필드: `mas.rts.Y.<field>`(51필드 중 `sep` 제외).
-- Statistics 창: 없음(요청 범위 밖).
+  **스펙 코드 번호 그대로**(`f101`, `f201`,
+  `f301`, ...) 필드명을 지었다.
+- 필드: `mas.rts.Y.<field>`(51필드 중 `type_echo` 제외).
 
 ### 3.9 TYPE='Z' 필드 레이아웃 — 투자자AMT (`mas_rts_z.lua`)
 
 §3.8(TYPE='Y')과 완전히 같은 구조지만 **수량 대신 금액**. 51 tab-분리
-필드: `key, sep, trade_time` + 16개 구분×3(매도AMT/매수AMT/순매수A). 스펙
+필드: `key, type_echo, f034` + 16개 구분×3(매도AMT/매수AMT/순매수A). 스펙
 코드가 TYPE='Y'의 코드 + 400(예: Y의 `101` → Z의 `501`)이라 **같은 16개
 투자자 구분을 가리키는 게 거의 확실**하다(단, 필드명은 각 타입 자기 코드를
 그대로 쓴다).
 
-- 구현 파일: `mas_rts_z.lua`. `Z.FIELD_NAMES`(51개), `Z.decode(body)`.
+- 구현 파일: `mas_rts_z.lua`. 필드 51개(`fields`).
   `key`도 §3.8과 동일하게 접두어 분해를 적용하지 않는다.
-- **네이밍**: `sell_amt_501`, `buy_amt_601`, `net_buy_amt_701`, ... 처럼
+- **네이밍**: `f501`, `f601`, `f701`, ... 처럼
   §3.8과 동일한 이유로 스펙 코드 번호(`501,502,...,510,530,531,560,570,
   571,590`)를 그대로 필드명에 썼다.
-- 필드: `mas.rts.Z.<field>`(51필드 중 `sep` 제외).
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.Z.<field>`(51필드 중 `type_echo` 제외).
 
 ### 3.10 TYPE='m'(소문자) 필드 레이아웃 — 시황제목/통합뉴스 (`mas_rts_lm.lua`)
 
 **뉴스 헤드라인 + 관련 종목 정보 + 제공처 메타데이터**. 16 tab-분리
-필드: `key, sep, content, issue_code, issue_name, key1, key2, time,
-category, category2, provider, date, price, volume, change_sign,
-key3`(스펙: `design/field_spec.md`).
+필드: `key, type_echo, f015, f301, f022, f041, f042, f043,
+f044, f045, f046, f047, f048, f049, f024,
+f050`(스펙: `design/field_spec.md`).
 
 - 파일명이 `mas_rts_lm.lua`("lower m")인 이유는 §8의 소문자 TYPE 네이밍
   규칙 참고. 등록 키(`mas.by_rts_type["m"]`), 라벨(`"type: m"`), Wireshark
   필터(`mas.rts.m.*`)는 파일명과 무관하게 실제 와이어 바이트 그대로 소문자
   `m`이다.
-- 구현 파일: `mas_rts_lm.lua`. `LM.FIELD_NAMES`(16개), `LM.decode(body)`.
-- **필드명 주의**: `category`/`category2`가 실측에서 "한차"/"한경차이나",
+- 구현 파일: `mas_rts_lm.lua`. 필드 16개(`fields`).
+- **필드명 주의**: `f044`/`f045`가 실측에서 "한차"/"한경차이나",
   "아경"/"아시아경제"처럼 뉴스 제공처의 약칭/전체명으로 보이는 값을 담고
   있어("분류"라는 스펙 라벨의 문자 그대로 의미와는 달라 보임) 확실한
   의미를 확정하지 못했다 — 필드명은 스펙의 한글 라벨을 그대로 직역한
   것이고, 의미를 임의로 추측해 재작명하지 않았다.
-- **EUC-KR 처리**: `content`(헤드라인)/`issue_name`/`category`/`category2`가
+- **EUC-KR 처리**: `f015`(헤드라인)/`f022`/`f044`/`f045`가
   EUC-KR이라, `mas_tr_90.lua`(주문결과)·`mas_rts_f.lua`(거래원)와 동일하게
   바디 전체를 EUC-KR→UTF-8로 변환한 뒤 tab-분리한다(탭 0x09는 멀티바이트
   시퀀스 안에 나타나지 않아 분리 결과가 그대로 맞다).
-- **`change_sign`(대비기호, 024)는 코드 필드다**: `design/field_spec.md`가
+- **`f024`(대비기호, 024)는 코드 필드다**: `design/field_spec.md`가
   정의한 149/742/752 계열과 같은 1=상한/2=상승/3=보합/4=하한/5=하락
   코드다. 실캡처 37건(`tcp_capture.cap` + `GlobalPart_RTS.pcap`)에서
   `"0"/"2"/"3"/"5"`가 관측됐고 `2`/`3`/`5`는 상승/보합/하락과 정확히
   일치 — `"0"`은 1..5 사전에 없어 라벨 없이 원본만 표시한다(뉴스에 종목
   가격이 안 붙은 경우로 추정, 미확인). 상세창에는 원본 값 그대로 표시한다(§6.7).
-- 필드: `mas.rts.m.<코드>`(16필드 중 `sep` 제외, 첫 필드는 `mas.rts.m.key`) — §6.7.
-- Statistics 창: 없음(요청 범위 밖).
+- 필드: `mas.rts.m.<코드>`(16필드 중 `type_echo` 제외, 첫 필드는 `mas.rts.m.key`) — §6.7.
 
 ### 3.11 TYPE='s'(소문자) 필드 레이아웃 — 해외주식 체결 (`mas_rts_ls.lua`, `design/field_spec.md`)
 
@@ -374,44 +374,44 @@ key3`(스펙: `design/field_spec.md`).
   라벨(`"type: s"`), Wireshark 필터(`mas.rts.s.*`)는 파일명과 무관하게 실제
   와이어 바이트 그대로 소문자 `s`이다.
 
-탭 구분 41필드(`key` + 스펙 40필드), `S.FIELD_NAMES`(코드 순서 그대로):
+탭 구분 41필드(`key` + 스펙 40필드), `fields`(와이어 순서 그대로):
 
 ```
-key type_echo realtime_gubun price_decimal_places business_date
-data_date_kr data_time_kr market_gubun change_sign volume_gubun
-trade_gubun base_price price change change_rate
-open_price high_price low_price bid_price ask_price
-trade_volume trade_value_k acc_volume acc_value_k
-open_change_rate high_change_rate low_change_rate vwap
-prev_day_ratio trade_strength
-regular_price regular_change_sign regular_change regular_change_rate
-regular_open_price regular_high_price regular_low_price
-day_regular_diff_sign day_regular_diff day_regular_diff_rate
-chart_skip_gubun
+key type_echo f888 f480 f310
+f146 f034 f672 f149 f387
+f035 f635 f023 f024 f033
+f029 f030 f031 f026 f025
+f032 f722 f027 f028
+f488 f487 f489 f252
+f251 f388
+f736 f742 f743 f739
+f729 f730 f731
+f752 f753 f754
+f676
 ```
 
-- **`change`(024)/`regular_change`(743)/`day_regular_diff`(753)는
-  코드+수치 필드다**: 앞 1글자가 `change_sign`/`regular_change_sign`/
-  `day_regular_diff_sign`(149/742/752)과 같은 전일대비구분 코드(1=상한/
-  2=상승/3=보합/4=하한/5=하락, `S.CHANGE_SIGN`)이고 나머지가 구분자 없는
-  ASCII 수치다(예: `"22.6700"` = 코드 `2`(상승) + 수치 `2.6700`). `S.decode_coded`가
-  부호 있는 실수로 변환한다(검증용 헬퍼; 상세창에는 별도 필드로 표시하지 않는다).
-  **이 디코딩 규칙이 확정되기 전에는 `base_price + change(raw) ==
-  price` 항등식이 성립하지 않아 TYPE='s' 구현이 보류돼 있었다** — 코드
+- **`f024`(024)/`f743`(743)/`f753`(753)는
+  코드+수치 필드다**: 앞 1글자가 `f149`/`f742`/
+  `f752`(149/742/752)과 같은 전일대비구분 코드(1=상한/
+  2=상승/3=보합/4=하한/5=하락)이고 나머지가 구분자 없는
+  ASCII 수치다(예: `"22.6700"` = 코드 `2`(상승) + 수치 `2.6700`). 검증에서는
+  코드의 부호(1,2=+/3=0/4,5=-)를 적용한 값(`signed`)을 썼다(구현에는 없음; 상세창에는 별도 필드로 표시하지 않는다).
+  **이 디코딩 규칙이 확정되기 전에는 `f635 + change(raw) ==
+  f023` 항등식이 성립하지 않아 TYPE='s' 구현이 보류돼 있었다** — 코드
   자릿수를 분리하지 않고 그대로 숫자로 읽었기 때문. 위 규칙 적용 후
   `tcp_capture.cap`의 실캡처 11건(종목 4종: DQQQM/BSGOV/CDRAM/CVOO) 전부
-  `base_price + decode_coded(change) == price`가 정확히 일치함을
-  확인했다(`mas.scan` → `R.split_records` → `S.decode` 전체 경로로 검증).
+  `f635 + signed(f024) == f023`가 정확히 일치함을
+  확인했다(`mas.scan` → `R.split_records` → `decode` 전체 경로로 검증).
 - **상세창 표시**: 코드 필드(149/742/752)는 원본 값 그대로, 코드+수치 필드
   (024/743/753)는 코드를 뗀 값 + `(코드;의미)` 하나로만 표시한다(§6.7, 예:
   `(024)전일대비: 2.6700 (2;상승)`). 필터 값은 코드를 뗀 문자열이다
   (예: `mas.rts.s.024 == "2.6700"`).
-- **필드별 byte 하이라이트**: `S.decode`가 `rec.__offsets[name] = {off, len}`를
+- **필드별 byte 하이라이트**: `decode`가 `rec.__off[k]`/`rec.__len[k]`(k = 와이어 순서의 필드 위치)를
   반환해 상세창에서 필드마다 자기 바이트만 하이라이트된다 — 모든 TYPE
   공통 규칙이므로 자세한 내용/발견된 버그 이력은 §6.6 참고.
-- **바디 끝에 잉여 tab이 하나 있다**: 마지막 필드(`chart_skip_gubun`) 값
+- **바디 끝에 잉여 tab이 하나 있다**: 마지막 필드(`f676`) 값
   뒤에 tab 1개, 그다음 NUL 1개로 끝난다(`...0\t\x00`, 11건 전부 동일). 다른
-  TYPE(`B`/`V` 등)의 NUL-only 종료와 달라 `S.decode`는 trailing NUL을 지운
+  TYPE(`B`/`V` 등)의 NUL-only 종료와 달라 `decode`는 trailing NUL을 지운
   뒤 trailing tab을 한 번 더 지우고 나서 tab-분리한다.
 - `key`(종목 심볼, 예: `"CVOO"`, `"DQQQM"`)와 `type_echo`(000, 바디 안에서
   TYPE 문자를 그대로 반복 — 관측값 항상 `"s"`)는 스펙 필드 목록에는 없지만
@@ -419,7 +419,6 @@ chart_skip_gubun
   컨벤션과 동일).
 - 필드: `mas.rts.s.<코드>`(41필드 중 RTS-TYPE(000) `type_echo` 제외 — 상세창에
   표시하지 않는다, §6.7. 첫 필드는 `mas.rts.s.key`).
-- Statistics 창: 없음(요청 범위 밖).
 
 ### 3.12 TYPE='q'(소문자) 필드 레이아웃 — 해외주식 호가 (`mas_rts_lq.lua`, `design/field_spec.md`)
 
@@ -428,15 +427,15 @@ chart_skip_gubun
   (`mas.by_rts_type["q"]`), 라벨(`"type: q"`), Wireshark 필터(`mas.rts.q.*`)는
   파일명과 무관하게 실제 와이어 바이트 그대로 소문자 `q`이다.
 
-탭 구분 72필드(`key` + 스펙 71필드), `Q.FIELD_NAMES`(코드 순서 그대로):
+탭 구분 72필드(`key` + 스펙 71필드), `fields`(와이어 순서 그대로):
 
 ```
-key type_echo realtime_gubun price_decimal_places business_date
-data_date_kr data_time_kr base_price
-ask_price1..10 bid_price1..10
-ask_qty1..10 bid_qty1..10
-ask_qty_chg1..10 bid_qty_chg1..10
-total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
+key type_echo f888 f480 f310
+f647 f040 f635
+f051..f060 f071..f080
+f041..f050 f061..f070
+f211..f220 f221..f230
+f101 f106 f103 f108
 ```
 
 - `ask_qty_chg`/`bid_qty_chg`(스펙 코드 211-230)는 원래 스펙 문서에
@@ -446,9 +445,9 @@ total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
   `mas_rts_c.lua`의 `ask_qty_chg`/`bid_qty_chg` 네이밍을 그대로 재사용.
 - `samples/GlobalPart_RTS.pcap`(포트 15201 스트림, pcapng라 이 세션에서
   직접 Ethernet/IPv4/TCP를 재조립해 추출 — tshark/scapy/dpkt 전부 미설치)의
-  실캡처 42건(종목 1종 `DTSLA`)으로 검증: `total_ask_qty ==
-  Σask_qty1..10`, `total_bid_qty == Σbid_qty1..10`이 **42/42 전건 일치**.
-  `total_ask_qty_chg`/`total_bid_qty_chg`는 각각 39/42, 35/42만 합이
+  실캡처 42건(종목 1종 `DTSLA`)으로 검증: `f101 ==
+  Σf041..f050`, `f106 == Σf061..f070`이 **42/42 전건 일치**.
+  `f103`/`f108`는 각각 39/42, 35/42만 합이
   맞는데, 잔량변화 배열이 상위 10단계까지만 보여줘서 11단계 밖 변동이
   총계엔 반영되고 배열엔 안 보이는 것으로 설명 가능(필드 매핑 문제
   아님) — `가격/잔량` 항등식이 100% 맞는 게 그 근거.
@@ -457,7 +456,6 @@ total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
   스펙 필드 목록에는 없지만 실측 바디에 존재해 `FIELD_NAMES`에 포함했다
   (`mas_rts_ls.lua`/`mas_rts_v.lua`의 `key` 컨벤션과 동일).
 - 필드: `mas.rts.q.<코드>`(72필드 중 `type_echo` 제외, 첫 필드는 `mas.rts.q.key`).
-- Statistics 창: 없음(요청 범위 밖).
 
 ### 3.13 TYPE='r'/'e' 필드 레이아웃 — 해외선물옵션 체결 (`mas_rts_lre.lua`, `design/field_spec.md`)
 
@@ -479,35 +477,35 @@ total_ask_qty total_bid_qty total_ask_qty_chg total_bid_qty_chg
   실제 와이어 바이트(`r.type`)를 그대로 쓴다(하드코딩 상수 아님) — 한
   add() 함수가 두 TYPE을 함께 처리하기 때문.
 
-탭 구분 15필드, `LRE.FIELD_NAMES`(코드 순서 그대로):
+탭 구분 15필드, `fields`(와이어 순서 그대로):
 
 ```
-key type_echo trade_time price change change_rate
-ask_price bid_price trade_volume acc_volume
-open_price high_price low_price trade_date business_date
+key type_echo f034 f023 f024 f033
+f025 f026 f032 f027
+f029 f030 f031 f619 f618
 ```
 
 - 스펙에는 예전에 `618(영업일)` 뒤에 `620(스프레드)`/`621(PIP_COST)`/
   `622(PIP_RATE)` 3필드가 나열돼 있었으나 **스펙 오류였고(사용자 확인,
   2026-09-28) 이후 스펙에서 삭제됐다** — 실캡처 340건이 예외 없이 전부
   정확히 15필드인 것과 일치한다.
-- `change`(024/전일대비)는 **코드+수치** 필드 — `mas_rts_ls.lua`의
-  `change`/`regular_change`/`day_regular_diff`와 같은 컨벤션(선행 1글자가
+- `f024`(024/전일대비)는 **코드+수치** 필드 — `mas_rts_ls.lua`의
+  `f024`/`f743`/`f753`와 같은 컨벤션(선행 1글자가
   1..5 전일대비구분 코드, 나머지가 ASCII 십진 크기). 상세창 표시는 §6.7
   (코드를 뗀 값 + `(코드;의미)`). `samples/GlobalPart_RTS.pcap`의
-  실캡처 `r` 340건에서 `|price| - decode_coded(change)`가 정확히 상수
+  실캡처 `r` 340건에서 `|f023| - signed(f024)`가 정확히 상수
   (90.52, 종목 `CLX26`의 기준가)로 전건 일치.
-- `price`/`ask_price`/`bid_price`/`open_price`/`high_price`/`low_price`는
+- `f023`/`f025`/`f026`/`f029`/`f030`/`f031`는
   **부호+크기** 필드다. 선행 문자(`+`/`-`/`' '`=보합)는 그 필드 고유의
   수학적 부호가 **아니다**(실제 가격은 음수가 될 수 없다) — "이 필드의
   크기가 기준가 이상(`+`)/미만(`-`)"을 뜻하는 정보성 플래그다. 이건
   `mas_rts_b.lua`(TYPE='B', 국내 체결)의 동일 필드군(1,777건, 다양한
   종목·양방향, 레코드 내에서 필드마다 부호가 다른 8건 포함)으로 교차검증—
-  "크기 ≥ 기준가(=|price|/(1+등락율%))" 규칙이 5,327건 전수 일치, 그리고
+  "크기 ≥ 기준가(=|f023|/(1+등락율%))" 규칙이 5,327건 전수 일치, 그리고
   `r` 자신의 340건에도(기준가=90.52) 재적용해 전건 일치. 상세창에는
   파생/가공 없이 와이어 그대로 표시한다(별도 stripped-magnitude 필드는
   요청되지 않아 추가하지 않음).
-- `change_rate`(033/등락율)는 `부호(+/-/' ')` + `계산된 값의 부호 포함
+- `f033`(033/등락율)는 `부호(+/-/' ')` + `계산된 값의 부호 포함
   문자열`을 그대로 이어붙인 형태다(사용자 확인, 2026-09-28) — 하락일 때
   둘 다 `-`라 `"--0.93"`처럼 이중 대시로 보이고, 상승일 때는 계산값
   자체가 양수(고유 부호 없음)라 `+`가 하나만 남는다. 상세창에는 원본
@@ -517,14 +515,13 @@ open_price high_price low_price trade_date business_date
   바뀌어도(예: 단일 대시로) 플러그인 코드 수정 없이 그대로 반영된다 —
   탭 분리는 필드 "개수"만 보고 내용은 안 보므로, `"--0.93"`을 `"-0.93"`으로
   고쳐 파싱하는 등의 변경은 하지 않는다.
-- `trade_volume`(032/체결량)은 실측에서 `"-1"`처럼 부호 있는 값이
+- `f032`(032/체결량)은 실측에서 `"-1"`처럼 부호 있는 값이
   관측됐으나(체결 방향? 미확인), 가격류 필드와 달리 "값이 항상 양수"라는
   근거가 없어 별도 가공 없이 원본 그대로(plain) 표시한다.
 - `key`(종목 심볼, 예: `"CLX26"`)와 `type_echo`(000, 관측값 `"r"`)는
   `mas_rts_lq.lua`와 같은 이유로 `FIELD_NAMES`에 포함.
 - 필드: `mas.rts.r.<코드>`(15필드 중 `type_echo` 제외), `mas.rts.e.<코드>`(같은
   필드, 실캡처 미검증).
-- Statistics 창: 없음(요청 범위 밖).
 
 ### 3.14 TYPE='R'(대문자) 필드 레이아웃 — 해외선물옵션 호가 (`mas_rts_r.lua`, `design/field_spec.md`)
 
@@ -540,29 +537,28 @@ open_price high_price low_price trade_date business_date
   (000 포함)다. 실캡처 274건(종목 `CLX26`, `samples/GlobalPart_RTS.pcap`)도
   예외 없이 전부 정확히 **39필드**(key 포함)로 일치한다.
 
-탭 구분 39필드, `R.FIELD_NAMES`(코드 순서 그대로):
+탭 구분 39필드, `fields`(와이어 순서 그대로):
 
 ```
-key type_echo quote_time ask_price bid_price
-ask_price1..5 ask_qty1..5 ask_qty_chg1..5
-bid_price1..5 bid_qty1..5 bid_qty_chg1..5
-total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
+key type_echo f040 f025 f026
+f051..f055 f041..f045 f211..f215
+f071..f075 f061..f065 f221..f225
+f101 f103 f106 f108
 ```
 
-- 항등식 **274/274(100%) 전건 일치**: `ask_price == ask_price1`,
-  `bid_price == bid_price1`, `total_ask_qty == Σask_qty1..5`,
-  `total_ask_qty_chg == Σask_qty_chg1..5`, `total_bid_qty == Σbid_qty1..5`,
-  `total_bid_qty_chg == Σbid_qty_chg1..5`. 매도/매수 호가 사다리도 5단계
+- 항등식 **274/274(100%) 전건 일치**: `f025 == f051`,
+  `f026 == f071`, `f101 == Σf041..f045`,
+  `f103 == Σf211..f215`, `f106 == Σf061..f065`,
+  `f108 == Σf221..f225`. 매도/매수 호가 사다리도 5단계
   전부 단조(크기 기준) 확인, 위반 0건 — `q`(§3.12) 때보다도 더 깨끗한
   검증(부분 불일치가 아예 없음).
-- `ask_price`/`bid_price`/`ask_price1..5`/`bid_price1..5`는 `r`/`e`(§3.13)
+- `f025`/`f026`/`f051..f055`/`f071..f075`는 `r`/`e`(§3.13)
   와 같은 **부호+크기** 필드다 — 선행 문자는 기준가 대비 플래그일 뿐
   가격 고유의 부호가 아니다. 상세창엔 파생/가공 없이 원본 그대로 표시
   (`mas_rts_lre.lua`와 동일 방침).
 - `key`(종목 심볼)와 `type_echo`(000, 관측값 `"R"`)는 다른 해외 TYPE들과
   같은 이유로 `FIELD_NAMES`에 포함.
 - 필드: `mas.rts.R.<코드>`(39필드 중 `type_echo` 제외, 첫 필드는 `mas.rts.R.key`).
-- Statistics 창: 없음(요청 범위 밖).
 
 ### 3.15 TYPE='u'(소문자) 필드 레이아웃 — 해외주식 체결 After Market (`mas_rts_lu.lua`, `design/field_spec.md`)
 
@@ -570,24 +566,23 @@ total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
   때문이다(§3.11과 같은 규칙). 등록 키/라벨/필터(`mas.rts.u.*`)는 실제
   와이어 바이트 그대로 소문자 `u`.
 - 탭 구분 31필드(`key` + 스펙 30필드), TYPE='s'와 같은 계열이되 정규장 블록
-  (736~754)이 없고 `change_sign`(735)/`price`(723)/`change`(724)/`change_rate`(733)가
+  (736~754)이 없고 `f735`(735)/`f723`(723)/`f724`(724)/`f733`(733)가
   After 값이다. 바디 끝의 잉여 tab + NUL 종료도 's'와 동일.
-- `change`(724)는 코드+수치 필드(§3.11 규칙과 동일, `U.decode_coded`,
-  `U.decode_coded`). `GlobalStock_type_u.pcap` 73건 전부
-  `base_price + decode_coded(change) == price` 일치.
+- `f724`(724)는 코드+수치 필드(§3.11 규칙과 동일). `GlobalStock_type_u.pcap` 73건 전부
+  `f635 + signed(f724) == f723` 일치.
 - 가격/수량류 필드(현재가·시가·고가·저가·호가 등)의 선행 부호(`+`/`-`/공백)는
   기준가(635)와의 비교 결과가 아니다(사용자 확인, 2026-09-29): 관측 샘플에서
-  `low_price`가 전 건 `-`인데 기준가보다 높은 것이 그 예다. `trade_volume`(032)의
+  `f031`가 전 건 `-`인데 기준가보다 높은 것이 그 예다. `f032`(032)의
   부호는 `+` 매수 체결/`-` 매도 체결/공백 미정의이며, 전 건 `-`(매도 체결)로
   관측됐다. 부호는 해석 없이 원본 그대로 표시한다.
 
 ### 3.16 TYPE='D' 필드 레이아웃 — 주식:호가잔량 (`mas_rts_d.lua`, `design/field_spec.md`)
 
 - 탭 구분 80필드: `key`(`N.A005930` 형태, 접두어 `M`/`N` = 거래소, 접두어 없음 = KRX —
-  C와 같은 규칙, 파생 필드 `mas.rts.D.market`/"거래소") + 마커(000) + 스펙 78필드.
+  C와 같은 규칙, 파생 필드 `mas.rts.D.exchange`/"거래소") + 마커(000) + 스펙 78필드.
   필드 배치는 C의 10단계 호가(가/량/비)와 같으나 KRX/NXT 분할 사다리가 없고 중간가(920~923)가 있다.
 - `*_qty_chg`(스펙명 매도비/매수비)는 C와 같은 수량 변화(부호 있음)로 보고 같은 내부명을 썼다.
-- 검증: 1,142건 전건 78필드, `total_ask_qty == Σask_qty1..10` 전건 일치.
+- 검증: 1,142건 전건 78필드, `f101 == Σf041..f050` 전건 일치.
   가격의 선행 부호(`+`/`-`/공백)는 해석 없이 원본 표시.
 
 ### 3.17 TYPE='c'(소문자) 필드 레이아웃 — 통합시세 11~20 호가 (`mas_rts_lc.lua`)
@@ -639,19 +634,20 @@ total_ask_qty total_ask_qty_chg total_bid_qty total_bid_qty_chg
 
 1. **구조:** 필드 수 = `key` + 마커(000) + 스펙 필드인지. 스펙 종목코드(301/260 등)가 별도 필드인지 선두
    `key`와 겹치는지(`S` 사례), 잉여 tab·스펙 외 추가 필드(`y`의 `extra` 사례)·부족 필드가 있는지.
-   `key`에 시장 접두어(`M.`/`N.`)가 있으면 `D`/`c`처럼 `market` 분리 추가.
-2. **값 해석:** 코드+값 필드(전일대비류)는 `split_coded`와 `(코드;의미)` 표시 추가, 순수 코드 필드와
+   `key`에 거래소 접두어(`M.`/`N.`)가 있으면 `D`/`c`처럼 `exchange` 분리 추가.
+2. **값 해석:** 코드+값 필드(전일대비류)는 `mas.split_coded`와 `(코드;의미)` 표시 추가, 순수 코드 필드와
    부호(`+`/`-`/공백) 의미는 사용자에게 확인(부호는 원본 표시가 기본, 문서에만 기록). 검증 가능한
    항등식(합계·잔량 합 등)은 전건 확인.
 3. **인코딩:** 이 31종은 전부 EUC-KR 변환(바디 전체 변환 후 분해)이 적용돼 있다. 한글이 실제로
    없으면 유지해도 무해(ASCII 무영향)하며, 다른 미변환 type과 통일할지는 그때 결정. 반대로 **변환이
    없는 기존 type(`B C D J R U V X Y Z c q r/e s u S 7 8`)에서 한글이 나오면 변환을 추가해야 한다**
-   (`decode(body, raw_body)`로 원본 바이트 오프셋 분리, `mas_rts_lm.lua`/`mas_rts_k.lua` 참고).
+   (`add_*`에서 `tvb:string(ENC_EUC_KR)` 변환본을 `body`, 원본을 `raw_body`로 `decode`에 넘긴다 —
+   `mas.decode_record`가 오프셋만 원본으로 계산. `mas_rts_lm.lua`/`mas_rts_k.lua` 참고).
 4. **코드 정리:** 내부명 `f<코드>`는 유지(스펙·필터·코드 1:1 대응, 영문 의미명으로 바꾸지 않음).
    파일 머리 `UNVERIFIED` 주석을 검증 결과(샘플 파일·건수·항등식)로 교체.
 5. **문서:** 이 절과 현황표 "미검증 31종" 행에서 해당 type 제거 후 개별 절·신뢰도 행 추가, §8 표와
    `mas.lua` 주석의 "31" 개수 갱신.
-6. **검증:** 샘플 전건 디코드(Lua 스텁), abbrev 중복 검사, 가능하면 Wireshark GUI에서 라벨·필터·한글 표시.
+6. **검증:** 샘플 전건 디코드(Lua 스텁), 리팩터링 전후 비교는 `tools/rts_dump.lua`, abbrev 중복 검사, 가능하면 Wireshark GUI에서 라벨·필터·한글 표시.
 
 ## 4. Layer 2/3 — Transaction (SESS=0x01)
 
@@ -707,13 +703,6 @@ AXIS-HEADER 필드만 표시하고 TR-DATA는 `mas.data`(raw)로 남긴다(§7).
   모든 Transaction MSGK에 공통 적용).
 - "실제로 디코드됐는가"는 값 필터 `mas.tr.msgk == 0x90 && !mas.tr.encrypted`
   또는 디코드 성공 시에만 채워지는 `mas.tr.90.<code>` 필드로 구분한다(§7.3).
-- Statistics 창: **MAS/UMP** — Account No(950) / Order No(952) /
-  Branch No(975) / Order No(969) / Order Method(951) / Issue Code(953) /
-  Process Type(977) / Order Qty(957) / Order Price(958) 컬럼, 5-tuple(Flow)
-  별 구분. 코드가 없는 메시지는 그 칸이 빈 값으로 표시된다.
-  ⚠️ 한 프레임에 여러 주문 메시지가 섞이고 그중 일부가 코드 구성이 다르면,
-  칼럼별 발생 목록을 인덱스로 zip하는 방식(`open_stream_window`) 특성상 그
-  프레임 내 행이 어긋날 수 있음(§6).
 
 ## 5. Transaction MSGK 구현 현황
 
@@ -747,7 +736,7 @@ AXIS-HEADER 필드만 표시하고 TR-DATA는 `mas.data`(raw)로 남긴다(§7).
   생략하면 Wireshark가 그 ASCII 바이트열을 **원시 이진수로 재해석**하려
   시도해 엉뚱한 값이 나오거나(필드 타입이 요구하는 바이트 수와 어긋나면)
   오류가 난다.
-  - 체결/호가 등 tab-분리 숫자 필드(`price`, `acc_volume` 등)와 주문 코드
+  - 체결/호가 등 tab-분리 숫자 필드(`f023`, `f027` 등)와 주문 코드
     필드(`mas.tr.90.<code>`) 자체는 `ProtoField.string`으로 등록되어 있어
     원본 문자 그대로("+206000", "0000037389" 등) 표시된다 — 이미 char[]
     그대로 맞는 처리다. (파생 정수 필드는 상세창에서 제거되었다, §6.7.)
@@ -848,7 +837,7 @@ mas.proto.experts = { <이 파일이 정의하는 ProtoExpert들> }   -- 있는 
 - TYPE/MSGK로 거르기: `mas.rts.type == "B"`, `mas.tr.msgk == 0x90` (공용
   헤더 필드라 디코드 성공 여부와 무관하게 항상 채워짐).
 - "실제로 디코드까지 성공했는가": 디코드 성공 시에만 채워지는 그 TYPE/MSGK
-  고유 필드를 bare로 쓴다 — 예: `mas.rts.B.market`(체결/호가는 성공 시 항상
+  고유 필드를 bare로 쓴다 — 예: `mas.rts.B.exchange`(체결/호가는 성공 시 항상
   채워짐), `mas.tr.90.950`(주문 결과는 코드가 메시지마다 달라 완벽한 대응
   필드는 없지만 실무적으로 충분). 리프 필드는 정확히 그 필드를 추가한
   코드 경로에서만 존재해 프로토 태깅과 같은 모호함이 생기지 않는다.
@@ -857,11 +846,6 @@ mas.proto.experts = { <이 파일이 정의하는 ProtoExpert들> }   -- 있는 
   `mas.tr.encrypted`/`mas.tr.svcc`/`mas.tr.trnm`/`mas.tr.length`)는 서브트리가
   어느 proto로 태그되든 실제 바이트에서 그대로 추출되므로 이 원칙과
   무관하게 항상 유효하다.
-
-`mas.open_stream_window`를 호출하는 두 Statistics 창(§3.1 MAS/Execution
-Prices, §4 MAS/UMP)의 tap 필터도 이 원칙에 맞춰 값 필터를 쓴다 —
-`mas_rts_b.lua`는 `mas.rts.B.market`, `mas_tr_90.lua`는 `mas.tr.msgk == 0x90
-&& !mas.tr.encrypted`.
 
 **새로운 "지원 범위 밖" 표시를 추가할 때는 항상 이 패턴을 따를 것**:
 서브트리는 무조건 `mas.proto`로 태그하고, 디코드 성공 표시는 라벨 문자열 +
@@ -906,18 +890,18 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 
 `"Unspecified RTS"`/`"Unspecified Transaction"` 같은 별도 라벨은 코드
 어디에도 없다. 디코드 성공 여부는 오직 그 서브트리 밑에 TYPE/MSGK 고유
-필드가 실제로 채워져 있는지(예: `mas.rts.B.market`, `mas.tr.90.950`)로만
+필드가 실제로 채워져 있는지(예: `mas.rts.B.exchange`, `mas.tr.90.950`)로만
 구분한다 — 라벨만 보고는 "이 레코드가 해석됐는지" 알 수 없고, 반드시
 필드를 확인해야 한다. 새 TYPE/MSGK 디코더를 추가해도 이 라벨은
 `mas_rts.lua`/`mas_tr.lua`가 이미 만들어 주므로 3계층 파일은 라벨을 신경
 쓸 필요가 없다.
 
-### 6.6 필드별 byte 하이라이트: `rec.__offsets[name] = {off, len}`
+### 6.6 필드별 byte 하이라이트: `rec.__off[k]` / `rec.__len[k]`
 
 **모든 TYPE 디코더**(`mas_rts_b/c/u/v/j/x/f/y/z/lm/ls/lq.lua`, RTS)와
 **`mas_tr_90.lua`(Transaction MSGK=0x90)**의 `decode()`는 tab-분리 시 각
 필드/코드-값 쌍의 원본 문자열 값뿐 아니라, body 안에서 그 필드가 차지하는
-0-based 바이트 범위(`{off, len}`, trailing NUL 제외 후 길이)도 함께
+0-based 바이트 범위(offset/length, trailing NUL 제외 후 길이)도 함께
 반환한다. `add_*` 함수는 상세창에 필드를 추가할 때 레코드/메시지 **전체**
 범위가 아니라 그 필드 자신의 바이트만 가리키는 tvbrange를 넘긴다.
 
@@ -928,26 +912,26 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
   (2026-09-28 발견·수정). 실캡처(RTS B/U/V/J/m/s, 1,837건)와 합성
   데이터(RTS C/X/Y/Z, Transaction 0x90 코드/값 쌍 + EUC-KR 필드)로 필드별
   tvbrange가 정확히 그 필드의 바이트만 가리키는지 재검증했다.
-- **`market`/`issue_code`처럼 파생/후처리된 필드**(`E.split_market` 등으로
+- **`exchange`/`key`처럼 파생/후처리된 필드**(`mas.split_exchange` 등으로
   prefix가 잘려 나간 값)는 정확히 그 값의 바이트 범위가 아니라, 원본
-  `issue_code` 필드 전체의 범위를 사용한다 — "M." 접두어까지 포함해 실제
+  `key` 필드 전체의 범위를 사용한다 — "M." 접두어까지 포함해 실제
   와이어에 있는 바이트를 가리키는 게 자연스럽고, prefix만큼만 잘라내는
   세밀함은 요청 범위 밖이라 추가하지 않았다.
 - **`reversed`(TYPE='B')처럼 계산된 필드**는 그 값이 유도된 원본
-  필드(`acc_volume`)의 범위를 재사용한다.
+  필드(`f027`)의 범위를 재사용한다.
 - **EUC-KR 텍스트가 있는 TYPE(`F`/`m`)**: 필드 값은 EUC-KR→UTF-8 변환된
-  `body`에서 오지만, `rec.__offsets`는 **변환 전 원본 바이트**(`tvb(...):raw()`)를
+  `body`에서 오지만, `rec.__off`/`rec.__len`은 **변환 전 원본 바이트**(`tvb(...):raw()`)를
   따로 tab-분리해서 얻는다 — tab(0x09)은 EUC-KR/UTF-8 어느 쪽 멀티바이트
   시퀀스 안에도 나타나지 않아 두 분리 결과의 필드 개수·순서는 항상
   같지만, 변환된 텍스트 자신의 바이트 오프셋은 (다국어 문자의 인코딩별
   바이트 길이가 달라) tvb의 원본 바이트 위치와 어긋나기 때문이다. 즉
-  `F.decode(utf8_body, raw_body)`/`LM.decode(utf8_body, raw_body)`처럼
+  `decode(utf8_body, raw_body)`(`mas_rts_f.lua`/`mas_rts_lm.lua` 등)처럼
   `decode()`가 선택적 2번째 인자(원본 바이트)를 받아, 주어지면 그걸로
   오프셋을 다시 계산해 덮어쓴다. `mas_tr_90.lua`의 `O.decode_order(utf8_body,
-  raw_body)`도 값이 EUC-KR일 수 있어(예: `956` issue_name) 같은 이중 처리를
+  raw_body)`도 값이 EUC-KR일 수 있어(예: `956` 종목명) 같은 이중 처리를
   한다.
 - **`mas_tr_90.lua`는 필드가 고정 위치가 아니라 코드/값 쌍의 가변 스트림**이라
-  `rec.__offsets`(이름 키 딕셔너리) 대신 각 쌍이 `{code, name, value,
+  `rec.__off`/`rec.__len`(필드 위치 배열) 대신 각 쌍이 `{code, name, value,
   code_off, value_off}`를 담는다. 알려진 코드는 `value_off`만
   하이라이트(값만 표시하므로), 사전에 없는 코드는 `pf.unknown`에 `"code=value"`
   형태로 표시되므로 `code_off.off`부터 `value_off.off+value_off.len`까지
@@ -964,14 +948,14 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 - **상세창 라벨**: `(코드)한글명`, 한글명은 스펙 그대로(예: `(023)현재가`,
   `(724)After전일대비`). 각 모듈의 `FIELD_SPEC[name] = { abbrev 접미사, 라벨 }`
   테이블이 스펙에서 생성되어 들어 있다(`FIELD_NAMES`의 영문 이름은 내부 디코드
-  전용으로 남는다). Statistics 창 컬럼 헤더도 같은 라벨을 쓴다.
-- **RTS-TYPE(000)은 표시하지 않는다**: 바디 안의 TYPE 문자 반복(`type_echo`, 또는 `sep`)은
+  전용으로 남는다).
+- **RTS-TYPE(000)은 표시하지 않는다**: 바디 안의 TYPE 문자 반복(`type_echo`)은
   디코드용으로만 `FIELD_NAMES`에 남고 상세창에 나오지 않으며 필터 필드도 없다
   (TYPE은 RTS-HEADER의 `mas.rts.type`으로 확인).
 - **스펙에 코드가 없는 필드**: 와이어 첫 필드(종목/지수 키)는 모든 RTS TYPE에서
-  `mas.rts.<T>.key`, 라벨 `key`(기존 `issue_code`도 이 이름으로 통일). `sep`는
+  `mas.rts.<T>.key`, 라벨 `key`(기존 `issue_code`도 이 이름으로 통일). `type_echo`는
   표시하지 않는다.
-- **파생 필드**: `mas.rts.B.market`(라벨 `거래소`, `B`/`C`/`F`), `mas.rts.B.reversed`
+- **파생 필드**: `mas.rts.B.exchange`(라벨 `거래소`, `B`/`C`/`F`), `mas.rts.B.reversed`
   (라벨 `역전`). 일부 필드만 정수로 바꾼 `*_num`(int)과 코드+수치 디코드값
   `*_num`(decoded)은 의미가 없거나 중복 표시라 제거했다.
 - **값 표시**: 코드 필드(149/742/752/735/024 대비기호)와 부호 접두 필드
@@ -1021,10 +1005,10 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 
 | 파일 | 계층 | 역할 |
 |---|---|---|
-| `mas.lua` | 1 (G/W) | G/W 헤더 프레이밍(`mas.scan`), 우산 proto(`mas`) + dissector, TCP 재조립, Info 컬럼 소유, 공용 Statistics 창(`mas.open_stream_window`) |
-| `mas_rts.lua` | 2 (RTS) | SESS=0x08 등록, RTS-HEADER 파싱(`split_records`), 공용 헤더 필드(`mas.rts.*`), TYPE별 디스패치(`mas.by_rts_type`), 미등록 TYPE도 `"type: <TYPE>"` 라벨로 표시(§6.5) |
+| `mas.lua` | 1 (G/W) | G/W 헤더 프레이밍(`mas.scan`), 우산 proto(`mas`) + dissector, TCP 재조립, Info 컬럼 소유 |
+| `mas_rts.lua` | 2 (RTS) | SESS=0x08 등록, RTS-HEADER 파싱(`split_records`), 공용 헤더 필드(`mas.rts.*`), TYPE별 디스패치(`mas.by_rts_type`), 미등록 TYPE도 `"type: <TYPE>"` 라벨로 표시(§6.5), 공용 `define_rts_type`(`mas.rts_defs` 큐로 각 TYPE 정의 등록: `fields` → `FIELD_NAMES`/`FIELD_SPEC`/`decode`, 상세창 필드·expert·`mas.by_rts_type` 등록·표시 루프), 공용 헬퍼 `mas.decode_record`(탭 분리·필드 수 검사·오프셋; 모든 TYPE의 `M.decode`가 호출)/`mas.split_with_offsets`, `mas.split_exchange`(`key`의 시장 접두어 분리), `mas.split_coded`(코드+수치 필드의 코드 분리·`(코드;의미)`) |
 | `mas_tr.lua` | 2 (Transaction) | SESS=0x01 등록, AXIS-HEADER 파싱, 공용 헤더 필드(`mas.tr.*`), MSGK별 디스패치(`mas.by_msgk`), 미등록/암호화 MSGK도 `"msgk: <name> (0x<hex>)"` 라벨로 표시(§6.5) |
-| `mas_rts_b.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.rts.B.*` 필드, MAS/Execution Prices 창. `mas.by_rts_type["B"]`에 등록 (§3.1) |
+| `mas_rts_b.lua` | 3 (RTS TYPE='B') | 체결 시세 디코드, `mas.rts.B.*` 필드. `mas.by_rts_type["B"]`에 등록 (§3.1) |
 | `mas_rts_c.lua` | 3 (RTS TYPE='C') | 호가 시세 디코드, `mas.rts.C.*` 필드. `mas.by_rts_type["C"]`에 등록 (§3.2) |
 | `mas_rts_u.lua` | 3 (RTS TYPE='U') | 업종:등락 디코드, `mas.rts.U.*` 필드. `mas.by_rts_type["U"]`에 등록 (§3.3) |
 | `mas_rts_v.lua` | 3 (RTS TYPE='V') | 해외:지수 디코드, `mas.rts.V.*` 필드. `mas.by_rts_type["V"]`에 등록 (§3.4) |
@@ -1039,7 +1023,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 | `mas_rts_lre.lua` | 3 (RTS TYPE='r'/'e', 소문자) | 해외선물옵션 체결 디코드, `mas.rts.r.*`/`mas.rts.e.*` 필드(개별 프리픽스). `mas.by_rts_type["r"]`/`["e"]` 둘 다에 등록 (§3.13, 파일명은 "lower r/e") |
 | `mas_rts_lu.lua` | 3 (RTS TYPE='u', 소문자) | 해외주식 체결(After Market) 디코드, `mas.rts.u.*` 필드. `mas.by_rts_type["u"]`에 등록 (§3.15, 파일명은 "lower u") |
 | `mas_rts_r.lua` | 3 (RTS TYPE='R', 대문자) | 해외선물옵션 호가 디코드, `mas.rts.R.*` 필드. `mas.by_rts_type["R"]`에 등록 (§3.14, 대문자라 l-접두어 불필요) |
-| `mas_tr_90.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.tr.90.*` 필드, MAS/UMP 창. `mas.by_msgk[0x90]`에 등록 |
+| `mas_tr_90.lua` | 3 (Transaction MSGK=0x90) | 주문 결과 디코드, `mas.tr.90.*` 필드. `mas.by_msgk[0x90]`에 등록 |
 
 - 조율은 `_G.mas` 공유 전역으로 이뤄지며, 각 파일이 자기 레지스트리 테이블을
   방어적으로 초기화한다(`mas.by_sess = mas.by_sess or {}` 등) — **로드 순서
@@ -1064,7 +1048,7 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
     `add_transaction`이 MSGK/암호화 여부로 `will_decode`만 판단해 헤더 필드를
     채우고 3계층 파일을 부를지 결정한 뒤 넘겨준다).
 - 새 메시지 타입을 추가하려면: RTS면 `mas_rts_c.lua`(TYPE='C', §3.2)처럼
-  새 파일을 만들어 `mas.by_rts_type[TYPE] = {...}`를 등록하고, Transaction이면
+  새 파일을 만들어 `mas.rts_defs`에 정의 테이블을 등록하고(`mas.by_rts_type[TYPE]`는 `define_rts_type`이 채운다), Transaction이면
   새 파일에서 `mas.by_msgk[해당MSGK] = {...}`를 등록하면 된다 — `mas_rts.lua`/
   `mas_tr.lua`는 건드릴 필요 없다.
 - **소문자 TYPE 파일 네이밍 규칙**: 파일명 규칙은 TYPE 글자를 소문자로
@@ -1090,9 +1074,9 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
 
 ## 9. 검증 방법론
 
-Wireshark GUI(트리 렌더링, 표시 필터, Statistics 창의 실제 클릭 동작)를
+Wireshark GUI(트리 렌더링, 표시 필터)를
 실행할 수 없는 환경에서는 다음 방식으로 로직·프레이밍 수준까지 검증한다
-(실제 Wireshark에 로드해 트리·필터·Statistics 창을 확인하는 것은 별도
+(실제 Wireshark에 로드해 트리·필터를 확인하는 것은 별도
 남은 단계):
 
 1. **순수 로직 검증**: `mas.scan` + `split_records`(`mas_rts.lua`) +

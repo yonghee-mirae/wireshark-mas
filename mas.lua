@@ -1,55 +1,16 @@
--- MAS Wireshark plugin — core (AXIS gateway transport + shared GUI).
+-- MAS Wireshark plugin core: AXIS gateway transport (G/W frames).
 --
--- Wire format (AXIS 4.x, cross-checked with the protocol doc):
---   Layer 1  G/W HEADER (12 bytes):
---     SOF(0xFE) SOF(0xFE) CTRL(1) SESS(1) CHCK(1) RSVD(2) LENGTH(5 ASCII)
---       CTRL  0x01 Normal, 0x02 ACK, 0x03 NAK, 0x04 POLL(heartbeat), 0x05 CheckSession
---       SESS  0x01 Transaction, 0x08 RTS(realtime), 0x99 SessionEnd
---       CHCK  bit 0x20 always, 0x02 compressed(LZO), 0x08 continuation, 0x01 ACK-req, 0x80 error
---       LENGTH payload length (bytes after the G/W header); NUL padding follows to the next frame
---   Layer 2  depends on SESS, dispatched by a thin per-layer module:
---     SESS 0x08 RTS         -> [ RTS-HEADER(6) + RTS-DATA ] repeated   (mas_rts.lua)
---     SESS 0x01 Transaction -> AXIS-HEADER(24) + TR-DATA               (mas_tr.lua)
---   Layer 3  depends on RTS TYPE / Transaction MSGK, one file per decoded
---   message type: mas_rts_b.lua (RTS TYPE='B'), mas_rts_c.lua
---   (RTS TYPE='C'), mas_rts_u.lua (RTS TYPE='U'), mas_rts_v.lua
---   (RTS TYPE='V'), mas_rts_j.lua (RTS TYPE='J'), mas_rts_x.lua
---   (RTS TYPE='X'), mas_rts_f.lua (RTS TYPE='F'), mas_rts_y.lua
---   (RTS TYPE='Y'), mas_rts_z.lua (RTS TYPE='Z'), mas_rts_lm.lua
---   (RTS TYPE='m', lowercase — "lm" avoids colliding with a future
---   TYPE='M'), mas_rts_ls.lua (RTS TYPE='s', lowercase — 해외주식 체결,
---   "lower s" for the same reason as mas_rts_lm.lua's "lower m"),
---   mas_rts_lq.lua (RTS TYPE='q', lowercase — 해외주식 호가, "lower q" for
---   the same reason), mas_rts_lre.lua (RTS TYPE='r' and TYPE='e', both
---   lowercase — 해외선물옵션 체결, "lower r/e" combined since both letters
---   share the exact same layout; "l" avoids colliding with a future
---   TYPE='R'/'E'), mas_rts_r.lua (RTS TYPE='R', uppercase — 해외선물옵션
---   호가; plain name since 'R' has no lowercase-collision issue, which is
---   why lowercase 'r'/'e' had to take mas_rts_lre.lua instead),
---   mas_rts_lu.lua (RTS TYPE='u', lowercase — 해외주식 체결(After Market),
---   "lower u" to avoid colliding with mas_rts_u.lua's TYPE='U'),
---   mas_rts_d.lua ('D'), mas_rts_lc.lua ('c'), mas_rts_k.lua ('K'),
---   mas_rts_ly.lua ('y'), mas_rts_s.lua ('S'), mas_rts_7.lua ('7'),
---   mas_rts_8.lua ('8'), and 31 unverified spec-only decoders (mas_rts_a.lua,
---   mas_rts_lg.lua, mas_rts_3.lua, ... one per TYPE in design/field_spec.md;
---   see PROTOCOL.md §3.23),
---   mas_tr_90.lua (Transaction MSGK=0x90). A new message type
---   decoder is added the same way: its own file, registering into
---   mas.by_rts_type[TYPE] or mas.by_msgk[MSGK].
+-- G/W HEADER (12 bytes): SOF(0xFE 0xFE) CTRL(1) SESS(1) CHCK(1) RSVD(2) LENGTH(5 ASCII); LENGTH counts the payload,
+-- NUL padding follows to the next frame.
+--   CTRL  0x01 Normal, 0x02 ACK, 0x03 NAK, 0x04 POLL, 0x05 CheckSession
+--   SESS  0x01 Transaction, 0x08 RTS, 0x99 SessionEnd
+--   CHCK  0x20 always set, 0x02 compressed (LZO), 0x08 continuation, 0x01 ACK request, 0x80 error
+-- SESS handlers: mas_rts.lua (RTS) and mas_tr.lua (Transaction). Message decoders, one file per TYPE/MSGK:
+-- mas_rts_<t>.lua (register in mas.rts_defs) and mas_tr_90.lua (mas.by_msgk). A lowercase TYPE gets an "l" prefix
+-- (mas_rts_lm.lua for 'm') so it cannot collide with an uppercase twin; the filter prefix and registration key
+-- stay the literal wire byte.
 --
--- Multi-file plugin (copy ALL into the plugins dir): mas.lua (this), mas_rts.lua,
--- mas_tr.lua, mas_rts_b.lua, mas_rts_c.lua,
--- mas_rts_u.lua, mas_rts_v.lua, mas_rts_j.lua, mas_rts_x.lua, mas_rts_f.lua,
--- mas_rts_y.lua, mas_rts_z.lua, mas_rts_lm.lua, mas_rts_ls.lua, mas_rts_lq.lua,
--- mas_rts_lre.lua, mas_rts_r.lua, mas_rts_lu.lua, mas_rts_d.lua,
--- mas_rts_lc.lua, mas_rts_k.lua, mas_rts_ly.lua, mas_rts_s.lua, mas_rts_7.lua,
--- mas_rts_8.lua, the 31 spec-only mas_rts_*.lua files, mas_tr_90.lua. They coordinate through the
--- shared global `_G.mas`; each layer-2 module registers itself by SESS value
--- (mas.by_sess), each layer-3 module registers itself by TYPE/MSGK
--- (mas.by_rts_type / mas.by_msgk). Only the decoded message types are fully
--- parsed; everything else (other SESS/TYPE/MSGK, compressed, heartbeat,
--- junk) is shown as raw data with the
--- header info.
+-- Copy ALL files into the plugins dir. They share the global `_G.mas`; load order is not relied upon.
 
 local mas = _G.mas or {}
 _G.mas = mas
@@ -66,7 +27,7 @@ mas.SESS_NAMES = { [0x01]="Transaction", [0x08]="RTS", [0x99]="SessionEnd" }
 -- Single-bit test (avoids relying on Lua 5.3 bitwise operators).
 function mas.hasbit(v, mask) return v % (mask + mask) >= mask end
 
--- 5-tuple key for a packet. Shared by reassembly (here) and per-stream analysis.
+-- 5-tuple key for a packet: used by reassembly (here) and B's reversal detection.
 function mas.stream_key(pinfo)
   return tostring(pinfo.src) .. ":" .. pinfo.src_port .. "->" ..
          tostring(pinfo.dst) .. ":" .. pinfo.dst_port
@@ -88,9 +49,8 @@ function mas.scan(buf)
     if i >= n then break end
     local avail = n - i
     if avail < 2 then
-      -- Too little left to know whether this is the 2-byte SOF marker. A lone
-      -- trailing 0xFE could be its first byte, so this is only "data" (junk) if
-      -- it definitely isn't; otherwise wait for more bytes (reassembly).
+      -- Too little left to be the 2-byte SOF: junk unless it could be the start of one
+      -- (a lone trailing 0xFE), in which case wait for more bytes.
       if buf:sub(i + 1, n) == SOF2:sub(1, avail) then
         pending = { offset = i, needed = 2 - avail }
       else
@@ -127,8 +87,7 @@ function mas.scan(buf)
       if nxt then
         endp = nxt - 1
       else
-        -- No full SOF2 ahead; a lone trailing 0xFE could start one once more
-        -- bytes arrive, so exclude it from this junk run.
+        -- No full SOF2 ahead; keep a lone trailing 0xFE out of the junk run.
         endp = (buf:byte(n) == 0xFE) and (n - 1) or n
       end
       items[#items + 1] = { t = "data", off = i, len = endp - i }
@@ -139,12 +98,8 @@ function mas.scan(buf)
 end
 
 if _G.Proto then
-  -- `mas` is the ONLY registered protocol in this plugin (see PROTOCOL.md §4.7)
-  -- — every other file appends its own fields to this same object via
-  -- `mas.proto.fields = {...}` rather than creating its own child Proto, so
-  -- there is nothing to filter on but `mas` itself plus field values. Guarded
-  -- with `or` since another file may have already created it first (load
-  -- order across files is intentionally not relied upon — see §6).
+  -- `mas` is the only registered protocol; every other file appends its fields to it.
+  -- `or` because another file may create it first (load order is not relied on).
   mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
   local proto = mas.proto
 
@@ -164,7 +119,7 @@ if _G.Proto then
   proto.prefs.port = Pref.uint("TCP port", 15201, "TCP port to auto-bind MAS to (either direction); irrelevant when manually applied via Decode As")
   local bound_port
 
-  -- Reassembly continuation tracking (see notes below).
+  -- Reassembly continuation tracking.
   local carry = {}       -- [stream key] = frame number that left an incomplete tail
   local cont_from = {}   -- [frame number] = earlier frame this one continues from
   local info_frame       -- last frame whose Info column we took over
@@ -192,12 +147,8 @@ if _G.Proto then
   end
 
   function proto.dissector(tvb, pinfo, tree)
-    -- No src_port re-check here: whatever bound this dissector to the packet —
-    -- the tcp.port table entry (apply_port, below) or a user's manual "Decode
-    -- As" (which can target any port/direction and must not be second-guessed)
-    -- — recognition then goes purely by content: does mas.scan find a G/W
-    -- frame? Non-MAS bytes on a bound port/stream just show up as "Unspecified"
-    -- rather than being silently rejected.
+    -- No src_port re-check: recognition is by content (does mas.scan find a G/W frame?), so a
+    -- manual "Decode As" on any port works; non-MAS bytes show up as "Unspecified".
     local buf = tvb:raw()
     if not buf or #buf == 0 then return 0 end
 
@@ -205,21 +156,11 @@ if _G.Proto then
     pinfo.cols.protocol = "MAS"
     local tree_root = tree:add(proto, tvb())
 
-    -- Info column is driven purely by CTRL/SESS (not decode success): every RTS
-    -- frame counts toward "RTS", every Transaction frame toward "Transaction"
-    -- (compressed or not, decoded or not), CTRL=POLL toward "POLL" (the spec's
-    -- own name for this CTRL value — see PROTOCOL.md §2) — always in that
-    -- fixed order. RTS/Transaction's count is the number of MESSAGES
-    -- actually CONTAINED, not the number of G/W frames: a single RTS G/W frame's
-    -- payload is a repeated RTS-HEADER+RTS-DATA, so it can hold several records
-    -- (decoded and undecoded TYPE records both count); a Transaction G/W frame
-    -- always holds exactly one AXIS-HEADER+TR-DATA, so it always counts as 1.
-    -- When the payload is compressed (or a handler otherwise isn't invoked), the
-    -- contained count can't be determined, so the frame itself counts as 1.
-    -- CTRL/SESS combinations outside these three ARE valid per spec (e.g. ACK/NAK/
-    -- CheckSession, or SESS=SessionEnd) and, along with plain junk bytes, all count
-    -- as "Unspecified" — its own bucket that coexists with the other three, always
-    -- listed last (e.g. "RTS:2 Transaction:1 POLL Unspecified").
+    -- Info column counts by CTRL/SESS, not decode success: RTS, Transaction, POLL, then
+    -- Unspecified (other CTRL/SESS such as ACK/NAK/SessionEnd, plus junk bytes), in that order.
+    -- RTS/Transaction count the messages actually contained (an RTS frame holds several
+    -- records, a Transaction frame exactly one); a compressed payload or missing handler
+    -- counts the frame itself as 1. E.g. "RTS:2 Transaction:1 POLL Unspecified".
     local cnt = { RTS = 0, Transaction = 0, POLL = 0, Unspecified = 0 }
 
     local nmsg = 0
@@ -266,11 +207,8 @@ if _G.Proto then
       from = cont_from[pinfo.number] or nil
     end
 
-    -- Build the Info text in fixed order. RTS/Transaction ALWAYS show a ":count"
-    -- suffix, even for exactly 1 (it's a contained-message count, not a frame
-    -- count, so it's informative even at 1). POLL/Unspecified never show a
-    -- count, just the bare word. The items==0 edge case (e.g. a single
-    -- unconfirmed 0xFE awaiting reassembly) still falls back to "Unspecified".
+    -- RTS/Transaction always show ":count" (even 1); POLL/Unspecified show the bare word.
+    -- No items at all (e.g. a lone 0xFE awaiting reassembly) falls back to "Unspecified".
     local ALWAYS_COUNT = { RTS = true, Transaction = true }
     local parts = {}
     for _, lbl in ipairs({ "RTS", "Transaction", "POLL", "Unspecified" }) do
@@ -282,8 +220,8 @@ if _G.Proto then
     local info = table.concat(parts, " ")
     if info == "" then info = "Unspecified" end
     info = info .. " "
-    -- Own the whole Info column so no TCP note leaks in: clear on the first (of
-    -- possibly several, under reassembly) calls for this frame; later calls append.
+    -- Own the whole Info column: clear on the first call for this frame, append on later ones
+    -- (reassembly can call several times).
     if info_frame ~= pinfo.number then
       info_frame = pinfo.number
       if from then info = string.format("(#%d)", from) .. info end
@@ -308,91 +246,6 @@ if _G.Proto then
   end
   apply_port()
   function proto.prefs_changed() apply_port() end
-end
-
--- ---------------------------------------------------------------------------
--- Shared GUI: a Statistics stream-list window. Stream modules register their own
--- Statistics menu whose callback calls mas.open_stream_window at click time.
--- ---------------------------------------------------------------------------
-if gui_enabled() then
-  local function current_filter(proto_filter)
-    local df = get_filter()
-    if df and df ~= "" then return "(" .. df .. ") and " .. proto_filter end
-    return proto_filter
-  end
-  local function flow_key(pinfo)
-    return tostring(pinfo.src) .. ":" .. pinfo.src_port .. "->" ..
-           tostring(pinfo.dst) .. ":" .. pinfo.dst_port
-  end
-
-  function mas.open_stream_window(title, proto_filter, columns, extractors)
-    local rows, flows, sel = {}, {}, nil
-
-    local function collect()
-      rows, flows = {}, {}
-      local seen = {}
-      local ok, tap = pcall(Listener.new, nil, current_filter(proto_filter))
-      if not ok then tap = Listener.new(nil, proto_filter) end
-      function tap.packet(pinfo)
-        local flow = flow_key(pinfo)
-        local cols, count = {}, 0
-        for i, ex in ipairs(extractors) do
-          cols[i] = { ex() }
-          if #cols[i] > count then count = #cols[i] end
-        end
-        for m = 1, count do
-          local vals = {}
-          for i, c in ipairs(columns) do
-            local fi = cols[i][m]
-            local v = fi and fi.value
-            if c.map then v = c.map(v) end
-            vals[i] = (v == nil) and "" or tostring(v)
-          end
-          rows[#rows + 1] = { frame = pinfo.number, flow = flow, vals = vals }
-          if not seen[flow] then seen[flow] = true; flows[#flows + 1] = flow end
-        end
-      end
-      retap_packets()
-      tap:remove()
-      if sel and not seen[sel] then sel = nil end
-    end
-
-    local tw = TextWindow.new(title)
-    local function render()
-      local out = {}
-      local df = get_filter()
-      out[#out + 1] = "Filter: " .. ((df and df ~= "") and df or "(none)")
-      out[#out + 1] = "Flow:   " .. (sel or ("all (" .. #flows .. " flows)"))
-      out[#out + 1] = ""
-      local hdr = { string.format("%-7s", "No.") }
-      for _, c in ipairs(columns) do hdr[#hdr + 1] = string.format("%-" .. c.width .. "s", c.header) end
-      out[#out + 1] = table.concat(hdr, " ")
-      local n = 0
-      for _, r in ipairs(rows) do
-        if (not sel) or r.flow == sel then
-          local line = { string.format("%-7d", r.frame) }
-          for i, c in ipairs(columns) do line[#line + 1] = string.format("%-" .. c.width .. "s", r.vals[i]) end
-          out[#out + 1] = table.concat(line, " ")
-          n = n + 1
-        end
-      end
-      out[#out + 1] = ""
-      out[#out + 1] = n .. " messages"
-      tw:set(table.concat(out, "\n"))
-    end
-
-    tw:add_button("Refresh", function() collect(); render() end)
-    tw:add_button("Flow", function()
-      if #flows == 0 then return end
-      local idx = 0
-      for i, f in ipairs(flows) do if f == sel then idx = i break end end
-      idx = idx + 1
-      sel = (idx > #flows) and nil or flows[idx]
-      render()
-    end)
-
-    collect(); render()
-  end
 end
 
 return mas

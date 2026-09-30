@@ -1,134 +1,15 @@
--- MAS RTS TYPE='V' (해외:지수, Overseas Index) decoder.
---
--- One RTS-DATA record's DATA (see mas_rts.lua for RTS-HEADER framing) is an
--- 11-field tab-separated body. This is the only RTS TYPE this module
--- decodes; every other TYPE is left to mas_rts.lua's generic
--- "type: <TYPE>"-only handling.
---
--- Field order/names are the spec given in design/field_spec.md, confirmed
--- against samples/20260921_nana.pcapng (100 sampled records, all exactly 11
--- tab-separated fields).
---
--- Pure helpers (decode, required by tests) + Wireshark registration.
--- Coordinates with core via _G.mas.
+-- RTS TYPE='V' (해외:지수, Overseas Index).
 
 local mas = _G.mas or {}
 _G.mas = mas
-mas.by_rts_type = mas.by_rts_type or {}
+mas.rts_defs = mas.rts_defs or {}
 
-local V = {}   -- module table: pure helpers (returned for tests)
+-- `key` is a foreign symbol (e.g. "CME@NQ"), not a KRX stock code: no exchange split.
 
-V.TYPE_INDEX = "V"   -- the only RTS TYPE this module decodes
-
--- Field order (0-based index 0..10), for RTS TYPE='V' (Overseas Index).
--- `key` is a foreign symbol (e.g. "CME@NQ", "USDKRWSMBS"), not a KRX stock
--- issue code, so no market-prefix split is applied (see mas_rts_u.lua for
--- the same "key" convention).
-V.FIELD_NAMES = {
-  "key", "sep", "trade_time",
-  "price", "change", "change_rate", "volume",
-  "open_price", "high_price", "low_price", "date",
+mas.rts_defs[#mas.rts_defs + 1] = {
+  type = "V",
+  fields = {
+    { "034", "거래시간" }, { "023", "현재가" }, { "024", "전일대비" }, { "033", "등락률" },
+    { "027", "거래량" }, { "029", "시가" }, { "030", "고가" }, { "031", "저가" }, { "047", "일자" },
+  },
 }
-
--- Split a tab-separated string into fields, stripping trailing NUL bytes from
--- each (see mas_rts_b for the version note). Also returns each field's own
--- 0-based byte range within `s` (post-NUL-strip length) so the detail pane
--- can highlight just that field's bytes instead of the whole record (see
--- add_index).
-local function split_with_offsets(s)
-  local fields, offsets = {}, {}
-  local start = 1
-  while true do
-    local sep = s:find("\t", start, true)
-    local e = sep and (sep - 1) or #s
-    local raw = s:sub(start, e)
-    local se = #raw
-    while se > 0 and raw:byte(se) == 0 do se = se - 1 end
-    fields[#fields + 1] = raw:sub(1, se)
-    offsets[#offsets + 1] = { off = start - 1, len = se }
-    if not sep then break end
-    start = sep + 1
-  end
-  return fields, offsets
-end
-
--- Split a tab-separated TYPE='V' body into a record keyed by FIELD_NAMES.
--- Returns nil if field count != 11. Trailing NULs are stripped.
--- `rec.__offsets[name] = {off, len}` gives each field's own byte range
--- within `body`.
-function V.decode(body)
-  local fields, offsets = split_with_offsets(body)
-  if #fields ~= #V.FIELD_NAMES then return nil end
-
-  local rec = { __offsets = {} }
-  for k = 1, #V.FIELD_NAMES do
-    rec[V.FIELD_NAMES[k]] = fields[k]
-    rec.__offsets[V.FIELD_NAMES[k]] = offsets[k]
-  end
-  return rec
-end
-
--- Spec code + detail-pane label per field, from design/field_spec.md:
--- FIELD_SPEC[name] = { filter suffix (mas.rts.V.<suffix>), label }. The wire's
--- leading key (not in the spec) is "key"; `sep` is never displayed.
-V.FIELD_SPEC = {
-  key = { "key", "key" }, trade_time = { "034", "(034)거래시간" },
-  price = { "023", "(023)현재가" }, change = { "024", "(024)전일대비" },
-  change_rate = { "033", "(033)등락률" }, volume = { "027", "(027)거래량" },
-  open_price = { "029", "(029)시가" }, high_price = { "030", "(030)고가" },
-  low_price = { "031", "(031)저가" }, date = { "047", "(047)일자" },
-}
-
-if _G.Proto then
-  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
-  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
-  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
-
-  -- Register a string field per FIELD_NAMES entry (sep omitted).
-  local pf = {}
-  for _, name in ipairs(V.FIELD_NAMES) do
-    if name ~= "sep" then  -- separator field: kept in FIELD_NAMES for decode, not displayed
-      pf[name] = ProtoField.string("mas.rts.V." .. V.FIELD_SPEC[name][1], V.FIELD_SPEC[name][2])
-    end
-  end
-
-  local fields = {}
-  for _, f in pairs(pf) do fields[#fields + 1] = f end
-  mas.proto.fields = fields
-
-  local expert_badfields =
-    ProtoExpert.new("mas.rts.V.expert.fields", "Unexpected overseas-index field count",
-      expert.group.MALFORMED, expert.severity.WARN)
-  mas.proto.experts = { expert_badfields }
-
-  -- Decode a TYPE='V' overseas-index record body into the tree. The subtree
-  -- is always tagged with the umbrella `mas` proto (see PROTOCOL.md §4.7) —
-  -- a malformed TYPE='V' body (wrong field count) is flagged via
-  -- expert_badfields instead; "did this decode?" is a field-value question,
-  -- not a presence-filter one (mirrors add_quote/add_breadth).
-  local function add_index(tree, tvb, poff, r, pinfo, msg_index)
-    local rec = V.decode(r.body)
-    local sub = tree:add(mas.proto, tvb(poff + r.off, 6 + r.len),
-      "type: " .. V.TYPE_INDEX .. " (" .. r.len .. " bytes)")
-    mas.rts_add_header(sub, tvb, poff, r)
-    if not rec then
-      sub:add_proto_expert_info(expert_badfields)
-      return false
-    end
-    local base = poff + r.off + 6   -- body start within tvb
-    for _, name in ipairs(V.FIELD_NAMES) do
-      if pf[name] then
-        local o = rec.__offsets[name]
-        sub:add(pf[name], tvb(base + o.off, o.len), rec[name])
-      end
-    end
-    return true
-  end
-
-  -- Register as the TYPE='V' decoder; mas_rts.lua's generic dispatcher calls
-  -- this for every TYPE='V' record and falls back to a bare "type: <TYPE>"
-  -- label itself for any other TYPE.
-  mas.by_rts_type[V.TYPE_INDEX] = { add = add_index }
-end
-
-return V

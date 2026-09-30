@@ -1,13 +1,5 @@
--- MAS Transaction MSGK=0x90 (UMP, 실시간주문체결통보 / Order Report) decoder.
---
--- TR-DATA for MSGK=0x90 (see mas_tr.lua for AXIS-HEADER framing) is a
--- variable, self-describing EUC-KR code/value stream (code\tvalue\t...), each
--- field identified by a numeric code (see ORDER_FIELDS). This is the only
--- Transaction MSGK this plugin decodes; every other MSGK is left to
--- mas_tr.lua's generic "msgk: <name> (0x<hex>)"-only handling.
---
--- Pure helpers (decode_order + dictionary, required by tests) + Wireshark
--- registration + the MAS/UMP Statistics window. Coordinates via _G.mas.
+-- MAS Transaction MSGK=0x90 (UMP, 실시간주문체결통보 / Order Report) decoder: a variable EUC-KR
+-- code<TAB>value<TAB>... stream whose fields are identified by numeric code (ORDER_FIELDS). The only MSGK decoded here.
 
 local mas = _G.mas or {}
 _G.mas = mas
@@ -17,10 +9,8 @@ local O = {}   -- module table: pure helpers (returned for tests)
 
 O.MSGK_ORDER = 0x90   -- UMP: the only MSGK this module decodes
 
--- Split a tab-separated string into tokens, stripping trailing NUL bytes from
--- each (see mas_rts_b for the version note). Also returns each token's own
--- 0-based byte range within `s` (post-NUL-strip length), so the detail pane
--- can highlight just that token's bytes (see add_order_body).
+-- Split on tabs, stripping trailing NULs from each token; also returns each token's 0-based
+-- byte range within `s` for per-token highlighting.
 local function split_with_offsets(s)
   local toks, offsets = {}, {}
   local start = 1
@@ -38,11 +28,9 @@ local function split_with_offsets(s)
   return toks, offsets
 end
 
--- Order code dictionary, in layout order: { code, Korean name } (names copied
--- verbatim from design/field_spec.md). The body is a
--- self-describing, variable stream of code/value pairs, so a field is identified
--- by its numeric code (not by position as in the execution record). Duplicate
--- labels are disambiguated by the code appended in the display name.
+-- Order code dictionary, in layout order: { code, Korean name }.
+-- The body is a variable stream of code/value pairs, so fields are identified by code, not
+-- position; the code in the display label disambiguates duplicate names.
 O.ORDER_FIELDS = {
   { "950", "계좌번호" },  { "975", "지점번호" },
   { "953", "종목단축코드" },  { "954", "주문통보TITLE" },
@@ -69,25 +57,15 @@ O.ORDER_FIELDS = {
   { "971", "거부수량" },  { "972", "취소수량" },
 }
 
--- code -> Korean name lookup, built from ORDER_FIELDS.
+-- code -> Korean name.
 O.ORDER_NAMES = {}
 for _, f in ipairs(O.ORDER_FIELDS) do O.ORDER_NAMES[f[1]] = f[2] end
 
--- Decode an order-report TR-DATA body into an ordered list of
--- { code, name, value, code_off, value_off }. The body is a tab-separated,
--- alternating code/value stream (each pair followed by its own tab, so a
--- trailing NUL/empty token after the last pair is normal and ignored); codes
--- are variable and self-describing. `name` is nil for a code outside the
--- dictionary.
---
--- `body` is the (possibly EUC-KR->UTF-8 transcoded, see add_order_body) text
--- used for VALUES. `raw_body`, if given, is the untranscoded wire bytes, used
--- only to compute `code_off`/`value_off` (each token's byte range within the
--- tvb) for the detail pane's per-field highlight — tab (0x09) never occurs
--- inside a multibyte EUC-KR/UTF-8 sequence, so both splits have the same
--- token count/order, but the transcoded text's own byte offsets don't match
--- the tvb's raw bytes once a multibyte value changes length (same reasoning
--- as mas_rts_f.lua's F.decode).
+-- Decode an order-report TR-DATA body (tab-separated code/value pairs; a trailing NUL/empty
+-- token is ignored) into a list of { code, name, value, code_off, value_off }; `name` is nil
+-- for a code outside the dictionary. `body` is the UTF-8 text used for values; `raw_body`
+-- (the untranscoded wire bytes) gives the offsets, which differ once a multibyte value
+-- changes length.
 function O.decode_order(body, raw_body)
   local toks, offsets = split_with_offsets(body)
   if raw_body then
@@ -104,14 +82,10 @@ function O.decode_order(body, raw_body)
 end
 
 if _G.Proto then
-  -- No dedicated Proto here — `mas` is the only registered protocol (§4.7).
-  -- Fields are appended to the shared mas.proto (cumulative; see PROTOCOL.md §6).
-  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")
+  mas.proto = mas.proto or Proto("mas", "Mirae Asset Securities")   -- the only protocol
 
-  -- One string field per dictionary code (filter mas.tr.90.<code>, display
-  -- "(<code>)<Korean name>"). Codes are variable per message; an unknown code
-  -- falls back to mas.tr.90.unknown. AXIS-HEADER fields live in mas_tr.lua
-  -- (mas.tr.*), shared across every Transaction MSGK decoder.
+  -- One string field per dictionary code (mas.tr.90.<code>, label "(<code>)<name>"); an unknown
+  -- code falls back to mas.tr.90.unknown.
   local pf = { unknown = ProtoField.string("mas.tr.90.unknown", "unknown_code") }
   local fields = { pf.unknown }
   for _, f in ipairs(O.ORDER_FIELDS) do
@@ -121,13 +95,8 @@ if _G.Proto then
   end
   mas.proto.fields = fields
 
-  -- Decode TR-DATA (poff/plen = the whole Transaction payload, AXIS-HEADER
-  -- included, matching what mas_tr.lua's dispatcher already has) into
-  -- `sub`. Values are EUC-KR, so the body is transcoded to UTF-8 before
-  -- splitting; tab (0x09) never occurs inside a multibyte sequence, so the split
-  -- stays correct. (Requires a Wireshark build with EUC-KR string support.)
-  -- Registered into mas.by_msgk[O.MSGK_ORDER] below; called by
-  -- mas_tr.lua's generic Transaction dispatcher.
+  -- Decode TR-DATA (poff/plen = the whole payload, AXIS-HEADER included) into `sub`. Values are
+  -- EUC-KR, so the body is transcoded to UTF-8 before splitting (needs EUC-KR string support).
   local function add_order_body(sub, tvb, poff, plen, pinfo)
     local doff, dlen = poff + 24, plen - 24
     local raw = (dlen > 0) and tvb(doff, dlen):raw() or ""
@@ -144,41 +113,7 @@ if _G.Proto then
     end
   end
 
-  -- Register as the MSGK=0x90 (UMP) decoder; mas_tr.lua's generic
-  -- dispatcher calls this for every unencrypted MSGK=0x90 message and falls
-  -- back to a bare "msgk: <name> (0x<hex>)" label itself for any other MSGK
-  -- (or if encrypted).
   mas.by_msgk[O.MSGK_ORDER] = { add = add_order_body }
-end
-
-if gui_enabled() then
-  -- Order window: lists messages per 5-tuple. A code missing from a given
-  -- message renders as a blank cell (open_stream_window already does this via
-  -- `(v == nil) and "" or tostring(v)`) — columns need not all be present. If a
-  -- frame carries several order reports and they don't all carry the same
-  -- codes, per-column occurrence lists can still misalign across those messages
-  -- (a documented limitation of the shared zip-by-index Statistics window).
-  local ORDER_COLUMNS = {
-    { field = "950", header = "(950)계좌번호",      width = 18 },
-    { field = "952", header = "(952)주문번호",      width = 14 },
-    { field = "975", header = "(975)지점번호",      width = 12 },
-    { field = "969", header = "(969)주문번호",      width = 14 },
-    { field = "951", header = "(951)주문방법(거래소)", width = 20 },
-    { field = "953", header = "(953)종목단축코드",  width = 16 },
-    { field = "977", header = "(977)처리구분",      width = 14 },
-    { field = "957", header = "(957)주문수량",      width = 12 },
-    { field = "958", header = "(958)주문가격",      width = 12 },
-  }
-  local extractors = {}
-  for i, c in ipairs(ORDER_COLUMNS) do extractors[i] = Field.new("mas.tr.90." .. c.field) end
-
-  register_menu("MAS/UMP", function()
-    -- Tap filter is field-value-based (see PROTOCOL.md §4.7): `mas.tr.90` is no
-    -- longer tagged on any subtree, so this reproduces `will_decode` (MSGK=0x90,
-    -- unencrypted) directly from the always-present AXIS-HEADER fields instead.
-    mas.open_stream_window("MAS - UMP", "mas.tr.msgk == 0x90 && !mas.tr.encrypted",
-      ORDER_COLUMNS, extractors)
-  end, MENU_STAT_UNSORTED)
 end
 
 return O
