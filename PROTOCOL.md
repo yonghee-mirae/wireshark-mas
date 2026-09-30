@@ -144,7 +144,7 @@ info만 붙인다(디코드 성공 여부는 라벨이 아니라 `mas.rts.<TYPE>
 `fields`는 스펙 필드를 와이어 순서로 나열한 것이고, 선두의 `key`와 `type_echo`는 자동으로 붙는다
 (스펙 밖 잉여 필드는 끝에 `"extra"`). 그 밖의 키: `strip`/`base_count`(디코드), `exchange`, `euckr`, `coded`,
 `types`/`expert_id`(lre), `extra_fields`/`after`/`init`(b). `mas_rts.lua`의 `define_rts_type`이
-`decode`, `FIELD_NAMES`/`FIELD_SPEC`, 상세창 필드, 필드 수 expert(`Unexpected TYPE <T> field count`),
+`decode`, `names`/`spec`(구 `FIELD_NAMES`/`FIELD_SPEC`), 상세창 필드, 필드 수 expert(`Unexpected TYPE <T> field count`),
 `mas.by_rts_type[TYPE]`를 만든다. 모듈이 `mas_rts.lua`보다 먼저 로드돼도 큐(`mas.rts_defs`)에 쌓였다가 처리되므로
 플러그인 로드 순서와 무관하다. 이름은 스펙 코드 `f<코드>`
 (예: `f023`, 4자리 코드는 `f1040`)다. 스펙에 코드가 없는 선두 키는 `key`, 숨은 레코드 타입 마커는
@@ -946,9 +946,8 @@ TYPE(RTS-HEADER)과 MSGK(AXIS-HEADER)는 **디코드 성공 여부와 무관하�
   TYPE 안에서 유일함을 확인했다(Transaction 46개 포함). 숫자로 시작하는 abbrev도
   Wireshark 필터에서 정상 동작함을 확인했다(`mas.tr.90.952`).
 - **상세창 라벨**: `(코드)한글명`, 한글명은 스펙 그대로(예: `(023)현재가`,
-  `(724)After전일대비`). 각 모듈의 `FIELD_SPEC[name] = { abbrev 접미사, 라벨 }`
-  테이블이 스펙에서 생성되어 들어 있다(`FIELD_NAMES`의 영문 이름은 내부 디코드
-  전용으로 남는다).
+  `(724)After전일대비`). 각 정의의 `spec[name] = { abbrev 접미사, 라벨 }`
+  테이블은 `define_rts_type`이 `fields` 목록에서 생성한다(내부 이름은 `f<코드>`).
 - **RTS-TYPE(000)은 표시하지 않는다**: 바디 안의 TYPE 문자 반복(`type_echo`)은
   디코드용으로만 `FIELD_NAMES`에 남고 상세창에 나오지 않으며 필터 필드도 없다
   (TYPE은 RTS-HEADER의 `mas.rts.type`으로 확인).
