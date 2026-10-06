@@ -1,12 +1,11 @@
--- RTS TYPE='G' (ETF:NAV). UNVERIFIED: no samples; the layout, framing (key + hidden marker + spec fields) and
--- plain char-array values are assumed from the protocol spec.
+-- RTS TYPE='G' (ETF:NAV).
 
 local mas = _G.mas or {}
 _G.mas = mas
 mas.rts_defs = mas.rts_defs or {}
 
 mas.rts_defs[#mas.rts_defs + 1] = {
-  type = "G", strip = "retry", euckr = true,
+  type = "G", strip = "retry",
   fields = {
     { "934", "나브시간" }, { "940", "나브시세" }, { "941", "나브대비" }, { "942", "나브등락율" },
     { "943", "NAV괴리도" }, { "944", "NAV괴리율" }, { "747", "ETF추적지수" },

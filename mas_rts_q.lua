@@ -1,12 +1,11 @@
--- RTS TYPE='Q' (상품선물:체결). UNVERIFIED: no samples; the layout, framing (key + hidden marker + spec fields) and
--- plain char-array values are assumed from the protocol spec.
+-- RTS TYPE='Q' (상품선물:체결).
 
 local mas = _G.mas or {}
 _G.mas = mas
 mas.rts_defs = mas.rts_defs or {}
 
 mas.rts_defs[#mas.rts_defs + 1] = {
-  type = "Q", strip = "retry", euckr = true,
+  type = "Q", strip = "retry",
   fields = {
     { "034", "체결시간" }, { "023", "현재가" }, { "024", "전일대비" }, { "033", "등락율" },
     { "025", "매도호가" }, { "026", "매수호가" }, { "032", "체결량" }, { "027", "거래량" },

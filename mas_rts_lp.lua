@@ -1,5 +1,4 @@
--- RTS TYPE='p' (주식옵션:호가). UNVERIFIED: no samples; the layout, framing (key + hidden marker + spec fields) and
--- plain char-array values are assumed from the protocol spec.
+-- RTS TYPE='p' (주식옵션:호가).
 
 local mas = _G.mas or {}
 _G.mas = mas

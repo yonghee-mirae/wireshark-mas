@@ -68,6 +68,21 @@ local function rstrip_nul_and_tab(s)
   return s:sub(1, e)
 end
 
+-- Map of 1-based tab-separated field index of `raw` -> number of NULs in it (the final byte, the
+-- record terminator, is ignored).
+local function nul_fields(raw)
+  local last = (raw:byte(-1) == 0) and #raw - 1 or #raw
+  local set, s, k = {}, 1, 1
+  while true do
+    local t = raw:find("\t", s, true)
+    local n = select(2, raw:sub(s, math.min(t and t - 1 or last, last)):gsub("%z", ""))
+    if n > 0 then set[k] = n end
+    if not t then break end
+    s, k = t + 1, k + 1
+  end
+  return set
+end
+
 -- Split an RTS-DATA body into rec[name] = value plus rec.__off[k] / rec.__len[k] (byte range of
 -- the k-th field); nil if the field count is wrong. `body` is UTF-8 text; `raw_body` (the
 -- untranscoded wire bytes, if different) is used only for the offsets. opts:
@@ -135,6 +150,8 @@ end
 --   euckr                body has EUC-KR text: transcoded before splitting, raw bytes give the offsets
 --   coded                set of 코드+수치 field names (mas.split_coded)
 --   types, expert_id     several TYPE letters sharing one layout / expert id (default: type)
+--   alt                  { when = function(rec) -> bool, labels = { name -> label } }: detail-pane label override
+--                        for records where `when` holds (the field and its filter name are unchanged)
 --   extra_fields(pf), after(sub, tvb, base, rec, pinfo, msg_index, pf, def), init()   hooks
 local function define_rts_type(def)
   local list = { "key", "type_echo" }
@@ -173,11 +190,28 @@ local function define_rts_type(def)
 
   local function add_record(tree, tvb, poff, r, pinfo, msg_index)
     local base = poff + r.off + 6   -- body start within tvb
-    local rec
-    if def.euckr then
-      local raw = (r.len > 0) and tvb(base, r.len):raw() or ""
-      local utf8 = (r.len > 0) and tvb(base, r.len):string(ENC_EUC_KR) or ""
-      rec = def.decode(utf8, raw)
+    local raw = def.euckr and ((r.len > 0) and tvb(base, r.len):raw() or "") or r.body
+    -- A NUL anywhere but the final record terminator is a sender bug: drop it from the values, flag it below.
+    local bad = raw:find("\0", 1, true)
+    bad = bad and bad < #raw
+    local rec, nul
+    if bad then
+      nul = nul_fields(raw)
+      local clean
+      if def.euckr then   -- tvb:string() stops at a NUL, so convert the NUL-free chunks
+        clean = ""
+        local s = 1
+        while s <= #raw do
+          local e = raw:find("\0", s, true) or (#raw + 1)
+          if e > s then clean = clean .. tvb(base + s - 1, e - s):string(ENC_EUC_KR) end
+          s = e + 1
+        end
+      else
+        clean = raw:gsub("%z", "")
+      end
+      rec = def.decode(clean, raw)
+    elseif def.euckr then
+      rec = def.decode((r.len > 0) and tvb(base, r.len):string(ENC_EUC_KR) or "", raw)
     else
       rec = def.decode(r.body)
     end
@@ -201,7 +235,11 @@ local function define_rts_type(def)
         local shown, note = rec[name]
         if coded[name] then shown, note = mas.split_coded(rec[name]) end
         local ti = sub:add(pf[name], tvb(base + offs[k], lens[k]), shown or rec[name])
+        if def.alt and def.alt.labels[name] and def.alt.when(rec) then
+          ti:set_text(def.alt.labels[name] .. ": " .. (shown or rec[name]))
+        end
         if note then ti:append_text(" (" .. note .. ")") end
+        if nul and nul[k] then ti:append_text((" (NUL)"):rep(nul[k])) end
       end
     end
     if def.after then def.after(sub, tvb, base, rec, pinfo, msg_index, pf, def) end

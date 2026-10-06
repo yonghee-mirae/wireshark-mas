@@ -1,5 +1,4 @@
--- RTS TYPE='l' (주식선물:호가). UNVERIFIED: no samples; the layout, framing (key + hidden marker + spec fields) and
--- plain char-array values are assumed from the protocol spec.
+-- RTS TYPE='l' (주식선물:호가).
 
 local mas = _G.mas or {}
 _G.mas = mas
