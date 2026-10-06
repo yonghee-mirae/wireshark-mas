@@ -68,19 +68,19 @@ local function rstrip_nul_and_tab(s)
   return s:sub(1, e)
 end
 
--- Map of 1-based tab-separated field index of `raw` -> number of NULs in it (the final byte, the
--- record terminator, is ignored).
-local function nul_fields(raw)
+-- `raw` with each NUL replaced by "\1" (the record's final NUL, its terminator, is dropped);
+-- text(i, j) gives the display text of raw bytes i..j (1-based).
+local function mark_nuls(raw, text)
   local last = (raw:byte(-1) == 0) and #raw - 1 or #raw
-  local set, s, k = {}, 1, 1
+  local parts, s = {}, 1
   while true do
-    local t = raw:find("\t", s, true)
-    local n = select(2, raw:sub(s, math.min(t and t - 1 or last, last)):gsub("%z", ""))
-    if n > 0 then set[k] = n end
-    if not t then break end
-    s, k = t + 1, k + 1
+    local e = raw:find("\0", s, true)
+    if not e or e > last then e = last + 1 end
+    parts[#parts + 1] = e > s and text(s, e - 1) or ""
+    if e > last then break end
+    s = e + 1
   end
-  return set
+  return table.concat(parts, "\1")
 end
 
 -- Split an RTS-DATA body into rec[name] = value plus rec.__off[k] / rec.__len[k] (byte range of
@@ -194,22 +194,12 @@ local function define_rts_type(def)
     -- A NUL anywhere but the final record terminator is a sender bug: drop it from the values, flag it below.
     local bad = raw:find("\0", 1, true)
     bad = bad and bad < #raw
-    local rec, nul
+    local rec, marked
     if bad then
-      nul = nul_fields(raw)
-      local clean
-      if def.euckr then   -- tvb:string() stops at a NUL, so convert the NUL-free chunks
-        clean = ""
-        local s = 1
-        while s <= #raw do
-          local e = raw:find("\0", s, true) or (#raw + 1)
-          if e > s then clean = clean .. tvb(base + s - 1, e - s):string(ENC_EUC_KR) end
-          s = e + 1
-        end
-      else
-        clean = raw:gsub("%z", "")
-      end
-      rec = def.decode(clean, raw)
+      marked = mark_nuls(raw, def.euckr
+        and function(i, j) return tvb(base + i - 1, j - i + 1):string(ENC_EUC_KR) end   -- tvb:string() stops at a NUL
+        or function(i, j) return raw:sub(i, j) end)
+      rec = def.decode((marked:gsub("\1", "")), raw)
     elseif def.euckr then
       rec = def.decode((r.len > 0) and tvb(base, r.len):string(ENC_EUC_KR) or "", raw)
     else
@@ -225,6 +215,18 @@ local function define_rts_type(def)
     if mas.collect then mas.collect(pinfo, r, poff, def, rec) end   -- set only while mas_stat_rts.lua collects
     local pf = pf_by_type[r.type]
     local offs, lens = rec.__off, rec.__len
+    local mf, spans   -- fields of `marked` (values with "\1" where a NUL was) and their byte ranges incl. NULs
+    if marked then
+      mf, spans = {}, {}
+      for f in (marked .. "\t"):gmatch("([^\t]*)\t") do mf[#mf + 1] = f end
+      local last, i = (raw:byte(-1) == 0) and #raw - 1 or #raw, 1
+      while true do
+        local t = raw:find("\t", i, true)
+        if not t or t > last then spans[#spans + 1] = { i - 1, last - i + 1 }; break end
+        spans[#spans + 1] = { i - 1, t - i }
+        i = t + 1
+      end
+    end
     if def.exchange then
       sub:add(pf.exchange, tvb(base + offs[1], lens[1]), rec.exchange)   -- shown before key
     end
@@ -234,12 +236,12 @@ local function define_rts_type(def)
       if pf[name] and rec[name] then
         local shown, note = rec[name]
         if coded[name] then shown, note = mas.split_coded(rec[name]) end
-        local ti = sub:add(pf[name], tvb(base + offs[k], lens[k]), shown or rec[name])
-        if def.alt and def.alt.labels[name] and def.alt.when(rec) then
-          ti:set_text(def.alt.labels[name] .. ": " .. (shown or rec[name]))
-        end
+        local mk = mf and mf[k] and mf[k]:find("\1", 1, true) and (mf[k]:gsub("\1", "(NUL)"))
+        local sp = mk and spans[k] or { offs[k], lens[k] }   -- a field with NULs highlights them too
+        local ti = sub:add(pf[name], tvb(base + sp[1], sp[2]), shown or rec[name])
+        local label = def.alt and def.alt.labels[name] and def.alt.when(rec) and def.alt.labels[name]
+        if label or mk then ti:set_text((label or def.spec[name][2]) .. ": " .. (mk or shown or rec[name])) end
         if note then ti:append_text(" (" .. note .. ")") end
-        if nul and nul[k] then ti:append_text((" (NUL)"):rep(nul[k])) end
       end
     end
     if def.after then def.after(sub, tvb, base, rec, pinfo, msg_index, pf, def) end
